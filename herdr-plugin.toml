@@ -1,0 +1,18 @@
+id = "zcode"
+name = "ZCode"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Open the ZCode coding agent in Herdr panes"
+platforms = ["macos", "linux"]
+
+[[panes]]
+id = "tui"
+title = "ZCode"
+placement = "split"
+command = ["sh", "bin/launch-zcode.sh"]
+
+[[actions]]
+id = "open-here"
+title = "Open ZCode here"
+contexts = ["pane", "workspace", "tab"]
+command = ["sh", "bin/open-zcode-here.sh"]
