@@ -100,3 +100,16 @@ exec "$PY3" "$PLUGIN_ROOT/scripts/zcodecli_cli.py" "\$@"
 WRAP
 chmod +x "$BIN/zcodecli"
 echo "zcodecli: $BIN/zcodecli (plugin root $PLUGIN_ROOT)"
+
+# bare `zcodecli`/`nar` on PATH: prefer Homebrew bin, else ~/.local/bin
+LINK_DIR=""
+[ -d /opt/homebrew/bin ] && [ -w /opt/homebrew/bin ] && LINK_DIR=/opt/homebrew/bin
+if [ -z "$LINK_DIR" ]; then
+  mkdir -p "$HOME/.local/bin" 2>/dev/null && LINK_DIR="$HOME/.local/bin"
+fi
+if [ -n "$LINK_DIR" ]; then
+  ln -sf "$BIN/zcodecli" "$LINK_DIR/zcodecli"
+  ln -sf "$BIN/nar" "$LINK_DIR/nar"
+  echo "PATH links: $LINK_DIR/zcodecli $LINK_DIR/nar"
+  case ":$PATH:" in *":$LINK_DIR:"*) ;; *) echo "note: $LINK_DIR is not on PATH; add it";; esac
+fi
