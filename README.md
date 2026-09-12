@@ -11,7 +11,7 @@ ZCode in Herdr, two ways:
 
 ## Install
 ```bash
-herdr plugin install Nofuture123/herdr-zcode-plugin
+herdr plugin install Nofuture123/herdr-zcode
 ```
 Build-time prereq checks: Herdr, Node >= 22, python3, git, ZCode executor.
 

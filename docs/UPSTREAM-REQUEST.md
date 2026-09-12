@@ -25,7 +25,7 @@ pi/codex integrations use (protocol 20):
    so session metadata persistence/restore covers ZCode panes the same way as pi/codex.
 2. Reference implementation available: ~50 lines of Python (stdlib socket, fire-and-forget,
    0.5s timeout, queue-free single-writer) embedded in our executor:
-   https://github.com/Nofuture123/qonnwolf-agent-bridge (scripts/executor_repl.py)
+   https://github.com/Nofuture123/herdr-zcode (scripts/executor_repl.py)
 
 ## State mapping
 task submitted → working · task settled → idle (Herdr derives done for unseen completions ·

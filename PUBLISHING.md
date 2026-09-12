@@ -8,10 +8,10 @@ Herdr 插件没有专门的服务器:插件就是一个普通 GitHub 仓库,mark
 
 ```bash
 # 1. 建公开仓库并推送(仓库根目录就是插件根目录,含 herdr-plugin.toml)
-gh repo create Nofuture123/herdr-zcode-plugin --public --source=. --push
+gh repo create Nofuture123/herdr-zcode --public --source=. --push
 
 # 2. 加 GitHub topic,marketplace 靠它发现插件
-gh repo edit Nofuture123/herdr-zcode-plugin --add-topic herdr-plugin
+gh repo edit Nofuture123/herdr-zcode --add-topic herdr-plugin
 ```
 
 ## 发布后验证
@@ -20,7 +20,7 @@ gh repo edit Nofuture123/herdr-zcode-plugin --add-topic herdr-plugin
 2. 安装验证:
 
    ```bash
-   herdr plugin install Nofuture123/herdr-zcode-plugin
+   herdr plugin install Nofuture123/herdr-zcode
    herdr plugin list
    herdr plugin action list --plugin zcode
    herdr plugin action invoke zcode.open-here
