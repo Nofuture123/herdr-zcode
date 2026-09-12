@@ -101,15 +101,24 @@ WRAP
 chmod +x "$BIN/zcodecli"
 echo "zcodecli: $BIN/zcodecli (plugin root $PLUGIN_ROOT)"
 
-# bare `zcodecli`/`nar` on PATH: prefer Homebrew bin, else ~/.local/bin
+# bare `zcodecli`/`nar` on PATH: never clobber a foreign command
 LINK_DIR=""
 [ -d /opt/homebrew/bin ] && [ -w /opt/homebrew/bin ] && LINK_DIR=/opt/homebrew/bin
 if [ -z "$LINK_DIR" ]; then
   mkdir -p "$HOME/.local/bin" 2>/dev/null && LINK_DIR="$HOME/.local/bin"
 fi
-if [ -n "$LINK_DIR" ]; then
-  ln -sf "$BIN/zcodecli" "$LINK_DIR/zcodecli"
-  ln -sf "$BIN/nar" "$LINK_DIR/nar"
-  echo "PATH links: $LINK_DIR/zcodecli $LINK_DIR/nar"
-  case ":$PATH:" in *":$LINK_DIR:"*) ;; *) echo "note: $LINK_DIR is not on PATH; add it";; esac
+LINKS_FILE="$BASE/path-links"
+: > "$LINKS_FILE" 2>/dev/null || true
+for name in zcodecli nar; do
+  dst="$LINK_DIR/$name"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$BIN/$name" ]; then
+    ln -sf "$BIN/$name" "$dst"          # refresh our own link
+  elif [ -e "$dst" ]; then
+    echo "skip: $dst already exists (not ours); use $BIN/$name directly"
+  else
+    ln -s "$BIN/$name" "$dst" && echo "$dst" >> "$LINKS_FILE"
+  fi
+done
+[ -s "$LINKS_FILE" ] && echo "PATH links: $(tr '\n' ' ' < "$LINKS_FILE")"
+case ":$PATH:" in *":$LINK_DIR:"*) ;; *) echo "note: $LINK_DIR is not on PATH; add it";; esac
 fi
