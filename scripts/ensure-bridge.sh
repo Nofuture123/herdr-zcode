@@ -124,10 +124,12 @@ for name in zcodecli nar; do
 done
 # prune links we own but that moved/changed location this run
 if [ -n "$OWNED_OLD" ]; then
-  printf "%b" "$OWNED_OLD" | while read -r oldl; do
+  printf "%b" "$OWNED_OLD" | while read -r oldl || [ -n "$oldl" ]; do
     [ -z "$oldl" ] && continue
     case "$OWNED_NEW" in *"$oldl"*) ;; *)
-      [ -L "$oldl" ] && rm -f "$oldl" && echo "pruned stale link $oldl" ;;
+      if [ -L "$oldl" ] && case "$(readlink "$oldl")" in "$BASE"/*) true;; *) false;; esac; then
+        rm -f "$oldl" && echo "pruned stale link $oldl"
+      fi ;;
     esac
   done
 fi
