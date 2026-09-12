@@ -1,18 +1,69 @@
 id = "zcode"
 name = "ZCode"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.8.0"
-description = "Open the ZCode coding agent in Herdr panes"
+description = "ZCode in Herdr: TUI panes + a delegation bridge (any CLI agent -> native ZCode executor)"
 platforms = ["macos", "linux"]
 
+# Runs once on `herdr plugin install`: prereq checks + pinned runtime bootstrap.
+[[build]]
+command = ["sh", "scripts/plugin-build.sh"]
+
+# Idempotent: keeps ~/.local/share/qonnwolf-zcode-bridge healthy across restarts.
+[[startup]]
+command = ["sh", "scripts/ensure-bridge.sh"]
+
+# The user-facing ZCode TUI.
 [[panes]]
 id = "tui"
 title = "ZCode"
 placement = "split"
 command = ["sh", "bin/launch-zcode.sh"]
 
+# The delegation bridge: serial task queue backed by NAR -> ZCode headless.
+[[panes]]
+id = "executor"
+title = "zcode-bridge"
+placement = "tab"
+command = ["sh", "scripts/executor-pane.sh"]
+
 [[actions]]
 id = "open-here"
 title = "Open ZCode here"
 contexts = ["pane", "workspace", "tab"]
 command = ["sh", "bin/open-zcode-here.sh"]
+
+[[actions]]
+id = "open-pane"
+title = "ZCode: open bridge executor pane"
+command = ["sh", "scripts/open-pane.sh"]
+
+[[actions]]
+id = "doctor"
+title = "ZCode: bridge doctor"
+command = ["sh", "scripts/bridge.sh", "doctor"]
+
+[[actions]]
+id = "status"
+title = "ZCode: task list"
+command = ["sh", "scripts/bridge.sh", "list"]
+
+[[actions]]
+id = "inject-mcp"
+title = "ZCode: inject MCP into Codex/Claude"
+command = ["sh", "scripts/inject-mcp.sh", "all"]
+
+[[actions]]
+id = "uninject-mcp"
+title = "ZCode: remove injected MCP configs"
+command = ["sh", "scripts/uninject-mcp.sh", "all"]
+
+[[actions]]
+id = "install-skill"
+title = "ZCode: install agent skill to ~/.agents/skills"
+command = ["sh", "scripts/install-skill.sh"]
+
+[[actions]]
+id = "uninstall-cleanup"
+title = "ZCode: cleanup before uninstall (MCP/skill/panes)"
+command = ["sh", "scripts/uninstall.sh"]

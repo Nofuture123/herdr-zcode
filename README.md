@@ -1,75 +1,30 @@
-# herdr-zcode-plugin
+# herdr-zcode
 
-A [Herdr](https://herdr.dev) plugin that opens the [ZCode](https://zcode.dev) coding agent in Herdr panes.
+ZCode in Herdr, two ways:
 
-It is a small POSIX-shell plugin with no build step. It gives you two things:
-
-- a `ZCode` pane entrypoint that launches the ZCode TUI, `cd`-ed into the workspace directory Herdr reports;
-- an `Open ZCode here` action that splits the focused pane (wide pane → right, tall pane → down, the same rule Herdr uses), renames the new pane to `zcode`, and starts the TUI there without moving your focus.
+1. **TUI** — open the native ZCode interactive agent in any Herdr pane (`Open ZCode here` action).
+2. **Bridge** — any CLI agent (Codex / Claude Code / pi / …) delegates coding tasks to the native
+   ZCode executor (GLM-5.3-Flash) over the Herdr protocol. Pure transport: the bridge reports
+   facts (status / verify_ok / out_of_scope); acceptance and rework discipline belong to the master
+   agent (see `skills/zcode-bridge/SKILL.md`). Based on
+   [native-agent-router](https://github.com/BerineYang/native-agent-router), pinned to a verified commit.
 
 ## Install
-
 ```bash
 herdr plugin install Nofuture123/herdr-zcode-plugin
 ```
+Build-time prereq checks: Herdr, Node >= 22, python3, git, ZCode executor.
 
-For local development, link a checkout instead:
-
-```bash
-git clone https://github.com/Nofuture123/herdr-zcode-plugin
-herdr plugin link /path/to/herdr-zcode-plugin
-```
-
-## Usage
-
-- Run the **Open ZCode here** action from the pane/workspace/tab context (or bind it to a key, below).
-- Or open a ZCode pane directly:
-
-  ```bash
-  herdr plugin pane open --plugin zcode --entrypoint tui
-  ```
-
-- List what the plugin registered:
-
-  ```bash
-  herdr plugin list
-  herdr plugin action list --plugin zcode
-  ```
-
-### Keybinding
-
-```toml
-[[keys.command]]
-key = "prefix+z"
-type = "plugin_action"
-command = "zcode.open-here"
-description = "Open ZCode here"
-```
-
-## Requirements
-
-- Herdr 0.8.0 or newer.
-- The ZCode CLI: a `zcode` executable on `PATH`, or ZCode.app on macOS (the
-  plugin falls back to
-  `/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs` via `node`). Set
-  `ZCODE_CJS` in the environment to point at a different `zcode.cjs`.
-- `python3` is optional and only used to read the pane geometry for the
-  split direction and to resolve the workspace directory; without it the
-  action still works and splits right.
-
-## How it works
-
-The plugin is plain shell. Its scripts call back into Herdr through
-`HERDR_BIN_PATH` (`pane edges`, `pane split`, `pane rename`, `pane run`) and
-read their context from `HERDR_PLUGIN_CONTEXT_JSON`. No build commands run at
-install time.
+## Use
+- `zcodecli`            — start a ZCode session in the current pane (one pane = one session)
+- `zcodecli chat-open`  — spawn a dedicated session pane
+- `zcodecli open`       — reception queue pane (serial, shared)
+- `zcodecli send|result|read|cancel` — programmatic delegation
+- Or just tell your agent: 「这票给 zcode 执行」
 
 ## Uninstall
+Action **"ZCode: cleanup before uninstall"**, then `herdr plugin uninstall zcode`.
 
-```bash
-herdr plugin uninstall zcode
-```
-
-## License
-
-[MIT](LICENSE)
+## Docs
+`docs/VERIFICATION.md` (evidence chain incl. 13 audit rounds) · `docs/REMEDIATION-PLAN.md` ·
+`docs/ORCHESTRATOR-GUIDE.md` · `docs/UPSTREAM-REQUEST.md` · `PUBLISHING.md` (herdr.dev release checklist)
