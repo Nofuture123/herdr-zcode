@@ -121,4 +121,3 @@ for name in zcodecli nar; do
 done
 [ -s "$LINKS_FILE" ] && echo "PATH links: $(tr '\n' ' ' < "$LINKS_FILE")"
 case ":$PATH:" in *":$LINK_DIR:"*) ;; *) echo "note: $LINK_DIR is not on PATH; add it";; esac
-fi
