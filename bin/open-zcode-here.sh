@@ -26,7 +26,7 @@ if size=$(pane_rect_size "$("$HERDR" pane edges --pane "$HERDR_PANE_ID")" "$HERD
   fi
 fi
 
-split_json=$("$HERDR" pane split --pane "$HERDR_PANE_ID" --direction "$direction" --no-focus)
+split_json=$("$HERDR" pane split --pane "$HERDR_PANE_ID" --direction "$direction" --cwd "${OPEN_CWD:-$(pwd)}" --no-focus)
 if ! pane_id=$(split_pane_id "$split_json"); then
   pane_id=$(printf '%s' "$split_json" | sed -n 's/.*"pane_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
 fi

@@ -15,6 +15,13 @@ herdr plugin install Nofuture123/herdr-zcode
 ```
 Build-time prereq checks: Herdr, Node >= 22, python3, git, ZCode executor.
 
+## ⚠️ Permissions (read before installing)
+The delegation executor runs ZCode with **full user permissions by default** (yolo + auto-approve,
+owner-authorized): tasks can read/write/execute anything your user can, including outside the
+workspace. Herdr plugins are not sandboxed. Restrict per-task (`"mode":"plan"/"edit"`,
+`"policy":"deny"`) or globally via `QAB_DEFAULT_MODE`/`QAB_DEFAULT_POLICY` env on the executor pane.
+The installer also symlinks `zcodecli` and `nar` into a PATH dir (Homebrew bin or `~/.local/bin`).
+
 ## Use
 - `zcodecli`            — start a ZCode session in the current pane (one pane = one session)
 - `zcodecli chat-open`  — spawn a dedicated session pane

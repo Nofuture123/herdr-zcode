@@ -13,7 +13,7 @@ fi
 
 # macOS app-bundle fallback. Point ZCODE_CJS at the zcode.cjs entrypoint when
 # ZCode lives somewhere else.
-_zcode_cjs="${ZCODE_CJS:-/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs}"
+_zcode_cjs="${ZCODE_BIN:-${ZCODE_CJS:-/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs}}"
 if [ -f "$_zcode_cjs" ] && command -v node >/dev/null 2>&1; then
   exec node "$_zcode_cjs"
 fi

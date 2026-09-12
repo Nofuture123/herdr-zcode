@@ -9,7 +9,7 @@ Zhipu/Z.AI's official coding agent CLI, shipped inside the ZCode desktop app at
 `zcode.cjs app-server`). Widely used with GLM-5.3 / GLM-5.3-Flash plans.
 
 ## What we already built and verified (working today, outside the integrations panel)
-A community Herdr plugin (`qonnwolf.zcode-bridge`) runs a persistent executor pane that
+A community Herdr plugin (`zcode`) runs a persistent executor pane that
 delegates tasks to headless ZCode. It reports agent state over the same socket protocol the
 pi/codex integrations use (protocol 20):
 
