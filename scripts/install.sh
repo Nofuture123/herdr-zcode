@@ -29,7 +29,7 @@ PLUGIN_ROOT="$HERE" sh "$HERE/scripts/ensure-bridge.sh" || fail "bridge runtime 
 ok "bridge runtime installed + doctor ok"
 
 # 5) Plugin registration (skip if already linked/installed)
-if herdr plugin list 2>/dev/null | grep -q "qonnwolf.zcode-bridge"; then
+if herdr plugin list 2>/dev/null | grep -q "zcode"; then
   ok "plugin already registered in herdr"
 else
   herdr plugin link "$HERE" >/dev/null || fail "herdr plugin link failed"

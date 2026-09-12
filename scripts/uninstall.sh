@@ -18,8 +18,8 @@ rm -f "$HOME/.pi/agent/skills/zcode-bridge" "$HOME/.claude/skills/zcode-bridge" 
 # 4) PATH symlinks
 rm -f /opt/homebrew/bin/zcodecli /opt/homebrew/bin/nar 2>/dev/null && echo "removed PATH symlinks"
 # 5) plugin registration (herdr-managed checkout is removed by `herdr plugin uninstall`)
-herdr plugin list 2>/dev/null | grep -q "qonnwolf.zcode-bridge" \
-  && herdr plugin unlink qonnwolf.zcode-bridge 2>/dev/null && echo "plugin unlinked (github installs: herdr plugin uninstall qonnwolf.zcode-bridge)"
+herdr plugin list 2>/dev/null | grep -q "zcode" \
+  && herdr plugin unlink zcode 2>/dev/null && echo "plugin unlinked (github installs: herdr plugin uninstall zcode)"
 # 6) runtime
 if [ "$PURGE" = "--purge" ]; then
   rm -rf "$BASE" && echo "runtime + ALL task data purged: $BASE"

@@ -107,7 +107,7 @@ def cmd_chat(a):
     os.execv(sys.executable, [sys.executable, script])
 
 def cmd_open(a):
-    rc, stdout, stderr = herdr(["plugin", "pane", "open", "--plugin", "qonnwolf.zcode-bridge",
+    rc, stdout, stderr = herdr(["plugin", "pane", "open", "--plugin", "zcode",
                                 "--entrypoint", "executor", "--placement", a.placement])
     print((stdout or stderr).strip()); return rc
 
