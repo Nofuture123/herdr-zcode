@@ -15,8 +15,18 @@ sh "$(dirname "$0")/uninject-mcp.sh" all 2>/dev/null || true
 # 3) shared skill + links
 rm -rf "$HOME/.agents/skills/zcode-bridge" && echo "removed shared skill"
 rm -f "$HOME/.pi/agent/skills/zcode-bridge" "$HOME/.claude/skills/zcode-bridge" 2>/dev/null
-# 4) PATH symlinks
-rm -f /opt/homebrew/bin/zcodecli /opt/homebrew/bin/nar 2>/dev/null && echo "removed PATH symlinks"
+# 4) PATH symlinks — remove ONLY links that point into our runtime (recorded or by target)
+LINKS_FILE="$BASE/path-links"
+if [ -f "$LINKS_FILE" ]; then
+  while read -r l; do
+    [ -z "$l" ] && continue
+    if [ -L "$l" ] && case "$(readlink "$l")" in "$BASE"/*) true;; *) false;; esac; then
+      rm -f "$l" && echo "removed link $l"
+    fi
+  done < "$LINKS_FILE"
+  rm -f "$LINKS_FILE"
+fi
+echo "PATH cleanup done (only our links removed)"
 # 5) plugin registration (herdr-managed checkout is removed by `herdr plugin uninstall`)
 echo "next: herdr plugin uninstall zcode   (removes the managed checkout; unlink would leave files)"
 # 6) runtime
