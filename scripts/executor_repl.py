@@ -20,7 +20,8 @@ from executor_common import (broker, build_kernel, report, remember_session,
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
-DEFAULT_WS = os.environ.get("QAB_DEFAULT_WORKSPACE", os.path.expanduser("~/projects/qab-demo"))
+DEFAULT_WS = os.path.realpath(os.environ.get("QAB_DEFAULT_WORKSPACE",
+                                             os.path.expanduser("~/projects/qab-demo")))
 DEFAULT_MODE = os.environ.get("QAB_DEFAULT_MODE", "yolo")
 DEFAULT_POLICY = os.environ.get("QAB_DEFAULT_POLICY", "allow")
 REQUIRE_VERIFY = os.environ.get("QAB_REQUIRE_VERIFY", "1") == "1"
@@ -59,7 +60,13 @@ class Reception:
                       idempotency_key=spec.get("idempotency_key"))
         if spec.get("session_ref"):
             kwargs["session_ref"] = spec["session_ref"]
-        snap = self.kernel.submit("zcode", spec["goal"], spec["workspace"], **kwargs)
+        try:
+            snap = self.kernel.submit("zcode", spec["goal"], spec["workspace"], **kwargs)
+        except Exception:
+            # never reached the queue: release the key so a retry is legal
+            if spec.get("idempotency_key"):
+                broker.idempotency_release(spec["idempotency_key"])
+            raise
         tid = snap.get("task_id")
         broker.attach_task(rid, tid)
         broker.set_owner(tid, self.pane_id)
@@ -102,6 +109,11 @@ class Reception:
         data = collect(snap)
         data.update({"request_id": rid, "_dur": round(dur, 1),
                      "result_file": broker.result_path(data["task_id"])})
+        # a task that died on the workspace lock never executed: release the
+        # idempotency key so the caller's retry with the same key is legal
+        if (data.get("status") == "failed" and spec.get("idempotency_key")
+                and "workspace_busy" in str(data.get("error") or "")):
+            broker.idempotency_release(spec["idempotency_key"])
         # one facts file per task: raw snapshot + flattened facts (master reads this)
         persist({**snap, "request_id": rid, "status": data["status"],
                  "ok": data["ok"], "verify_ok": data["verify_ok"],
@@ -109,6 +121,8 @@ class Reception:
                  "changed_files": data["changed_files"],
                  "summary": data["summary"], "usage": data["usage"]})
         self.sig_result(rid, data["task_id"])
+        self.out(f"[zcodecli:done] {data['task_id']} {data['status']} "
+                 f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)")
         if data.get("summary"):
             self.out("[zcodecli:summary] " + sanitize(data["summary"]))
         remember_session(data.get("native_session_id"))

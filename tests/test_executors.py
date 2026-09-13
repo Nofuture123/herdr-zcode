@@ -108,7 +108,7 @@ class TestReception(unittest.TestCase):
         self.assertEqual(len(k.submits), 2)
         kw = k.submits[1]
         self.assertEqual(kw["goal"], "fix it please")
-        self.assertEqual(kw["workspace"], WS)                # inherited
+        self.assertEqual(kw["workspace"], os.path.realpath(WS))  # inherited (canonical)
         self.assertIsNotNone(kw.get("session_ref"))          # REAL native-session continuation
         self.assertNotIn("rework cap", buf.getvalue())       # no bridge-side cap (master's job)
 

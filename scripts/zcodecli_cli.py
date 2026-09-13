@@ -77,8 +77,15 @@ def resolve_pane(explicit=None):
 
 def cmd_chat_open(a):
     cwd = a.cwd or os.getcwd()
+    ws_arg = a.workspace
+    if ws_arg and (os.path.isdir(ws_arg) or ws_arg.startswith(("/", "~", "."))):
+        # herdr tab create --workspace wants a workspace ID (e.g. w73), not a
+        # path; a path almost always means the caller wants the cwd. Fix it.
+        if not a.cwd: cwd = os.path.realpath(os.path.expanduser(ws_arg))
+        print(f"note: --workspace got a path; using it as --cwd {cwd} (default workspace)", file=sys.stderr)
+        ws_arg = None
     args = ["tab","create","--cwd",cwd,"--label",a.label or f"zcode-chat-{time.strftime('%H%M%S')}"]
-    if a.workspace: args += ["--workspace",a.workspace]
+    if ws_arg: args += ["--workspace",ws_arg]
     rc, stdout, stderr = herdr(args)
     try:
         d=json.loads(stdout); tab=d["result"]["tab"]
@@ -121,6 +128,7 @@ def cmd_send(a):
     pid = need_pane(getattr(a, 'pane', None))
     ws = a.workspace or os.getcwd()
     if not os.path.isdir(ws): print(f"workspace not a dir: {ws}", file=sys.stderr); return 2
+    ws = os.path.realpath(ws)   # one canonical form: locks and sessions key on this
     text = a.text
     stripped = text.strip()
     nonce = secrets.token_hex(4)
@@ -139,23 +147,30 @@ def cmd_send(a):
     rc, stdout, stderr = herdr(["pane", "run", pid, text])
     if rc != 0:
         print((stderr or stdout).strip(), file=sys.stderr); return rc
-    # short ACK wait: the executor echoes [zcodecli:accepted] on submit
-    if not a.raw and not stripped.startswith("/"):
-        rc2, out2, _ = herdr(["pane", "wait-output", "--match", "[zcodecli:",
-                              "--timeout", "15000", pid], timeout=20)
-        rc3, out3, _ = herdr(["pane", "read", pid, "--source", "visible", "--lines", "80"])
+    if a.raw or stripped.startswith("/"):
+        print(f"sent to pane {pid} (workspace: {ws})")
+        return 0
+    # Receipt poll: match THIS nonce only (never a stale marker), and read
+    # recent-unwrapped so a narrow pane's folded error JSON stays on one line.
+    deadline = time.time() + 15
+    marks = []
+    while time.time() < deadline:
+        _, out3, _ = herdr(["pane", "read", pid, "--source", "recent-unwrapped",
+                            "--lines", "200"])
         marks = [l for l in (out3 or "").splitlines()
-                 if (("[zcodecli:accepted]" in l or "[zcodecli:error]" in l) and nonce in l)]
+                 if nonce in l and ("[zcodecli:accepted]" in l or "[zcodecli:error]" in l)]
         if marks:
-            last = marks[-1]
-            if "[zcodecli:error]" in last:
-                print(last.split("[zcodecli:error]",1)[1].strip(), file=sys.stderr); return 5
-            try: print("accepted:", last.split("[zcodecli:accepted]",1)[1].strip())
-            except Exception: print(last)
-            return 0
-        print("no receipt within 15s (task may still be queued)", file=sys.stderr)
+            break
+        time.sleep(0.5)
+    if not marks:
+        print("no receipt within 15s (task may still be queued; re-check with "
+              f"zcodecli --pane {pid} read)", file=sys.stderr)
         return 4
-    print(f"sent to pane {pid} (workspace: {ws})")
+    last = marks[-1]
+    if "[zcodecli:error]" in last:
+        print(last.split("[zcodecli:error]",1)[1].strip(), file=sys.stderr); return 5
+    try: print("accepted:", last.split("[zcodecli:accepted]",1)[1].strip())
+    except Exception: print(last)
     return 0
 
 def cmd_close(a):
@@ -181,7 +196,8 @@ def cmd_result(a):
     req = getattr(a, "request", None)
 
     def grab():
-        rc2, out2, _ = herdr(["pane", "read", pid, "--source", "visible", "--lines", "160"])
+        rc2, out2, _ = herdr(["pane", "read", pid, "--source", "recent-unwrapped",
+                              "--lines", "160"])
         lines = [l for l in (out2 or "").splitlines() if l.startswith("[zcodecli:result]")]
         if req:
             lines = [l for l in lines if f" {req} " in l]
@@ -271,14 +287,14 @@ def cmd_list(a):
         st=t.get("status","?"); tid=t.get("task_id","?"); ts=t.get("created_at","")[11:19]
         c=SC.get(st,DIM)
         print(f"  {c}●{RST} {c}{st:<16}{RST} {DIM}{tid:<16}{RST} {ts}  {trunc(t.get('goal',''),33)}")
-    print(f"{DIM}  {len(tasks)} task(s) · workspace lock: serial{RST}")
+    print(f"{DIM}  {len(tasks)} task(s) · lock: serial per workspace (abspath; "
+          f"parallel tickets need distinct paths/worktrees){RST}")
     return 0
 
-def cmd_nar(a):
+def cmd_nar_inspect(a):
     if not os.path.exists(NAR):
         print("bridge not installed; run the plugin startup or ensure-bridge.sh", file=sys.stderr); return 2
-    os.execv(NAR, [NAR] + a.nar_args)
-
+    os.execv(NAR, [NAR, "inspect"] + a.nar_args)
 
 def cmd_cancel(a):
     tid = a.nar_args[0] if a.nar_args else None
@@ -319,7 +335,7 @@ s = sub.add_parser("close"); s.set_defaults(fn=cmd_close)
 s = sub.add_parser("chat"); s.add_argument("--workspace", default=None); s.set_defaults(fn=cmd_chat)
 s = sub.add_parser("wait"); s.add_argument("text"); s.add_argument("--timeout", type=int, default=60000); s.set_defaults(fn=cmd_wait)
 s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_list)
-s = sub.add_parser("inspect"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_nar)
+s = sub.add_parser("inspect"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_nar_inspect)
 s = sub.add_parser("cancel"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_cancel)
 a = p.parse_args()
 if not getattr(a, "cmd", None):

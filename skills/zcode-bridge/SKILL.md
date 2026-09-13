@@ -61,11 +61,23 @@ serial queue for quick one-off delegations.
    - `mode` defaults to yolo (full access). Use "plan"/"edit" in JSON to restrict a specific task;
      set env QAB_DEFAULT_MODE/QAB_DEFAULT_POLICY on the executor pane to restrict globally.
    - `scope`: allowed relative paths. `verify`: real check command (a check is a permission too).
+   - FAIL-CLOSED: a JSON task with mode edit/yolo and NO `verify` is REJECTED
+     ("verify is required for yolo tasks"). Plain text (item 1) stays full-access by design.
    - `idempotency_key`: ALWAYS set one; resubmitting the same key never double-executes.
+     (Exception: a `workspace_busy` failure means the task never started, so the key is
+     released and the same key may be resubmitted immediately.)
 3. `/continue <text>` — follow-up on the same native ZCode session (rework rounds).
 4. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
-   One task runs at a time; the pane prints `[zcodecli:result] {json}` when done and the full
+   One task runs at a time; the pane prints `[zcodecli:done] <task_id> <status> verify_ok=...`
+   plus `[zcodecli:result] {json}` when done, and the full
    evidence lands in `~/.local/share/qonnwolf-zcode-bridge/results/<task_id>.json`.
+
+## Parallelism: serial per workspace
+The native-agent-router locks the workspace (abspath hash; released only when the pid dies).
+TWO TICKETS ON THE SAME DIRECTORY RUN SERIALLY — the second is rejected with `workspace_busy`
+while the first runs. For parallel tickets give each its own path: a git worktree, or at least
+a distinct directory alias (symlink) of the same project. Scope-disjoint files do NOT lift
+the lock today.
 
 ## Acceptance rules (never trust "done")
 `zcodecli result` returns status + summary + changed_files + verify output. Accept ONLY if:

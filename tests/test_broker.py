@@ -93,6 +93,31 @@ class TestIdempotency(unittest.TestCase):
         st, _ = broker.idempotency_claim(None, "fpZ")
         self.assertEqual(st, "new")
 
+    def test_release_allows_legal_resubmit(self):
+        st, rec = broker.idempotency_claim("krel", "fpA")
+        self.assertEqual(st, "new")
+        broker.idempotency_state("krel", "fpA", "attached", task_id="t-abc123",
+                                 request_id=rec["request_id"])
+        st2, _ = broker.idempotency_claim("krel", "fpA")   # attached: blocked as duplicate
+        self.assertEqual(st2, "duplicate")
+        broker.idempotency_release("krel")                 # task never ran (workspace_busy)
+        st3, _ = broker.idempotency_claim("krel", "fpA")
+        self.assertEqual(st3, "new")
+
+
+class TestWorkspaceCanonical(unittest.TestCase):
+    def test_realpath_unifies_alias_and_real(self):
+        real = tempfile.mkdtemp()
+        alias = real + ".alias"
+        os.symlink(real, alias)
+        try:
+            s1 = broker.normalize_spec({"goal": "x", "workspace": alias}, alias)
+            s2 = broker.normalize_spec({"goal": "x", "workspace": real}, real)
+            self.assertEqual(s1["workspace"], os.path.realpath(real))
+            self.assertEqual(s1["workspace"], s2["workspace"])
+        finally:
+            os.remove(alias)
+
     def test_concurrent_same_key_never_reruns(self):
         def claim(i):
             return broker.idempotency_claim("race2", "fpR")[0]

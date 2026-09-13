@@ -54,6 +54,7 @@ def normalize_spec(obj, default_ws, default_mode="yolo", default_policy="allow",
     ws = obj.get("workspace", default_ws)
     if not isinstance(ws, str) or not os.path.isdir(ws):
         raise SpecError(f"workspace is not a directory: {ws!r}")
+    ws = os.path.realpath(ws)   # one canonical form everywhere: locks, sessions, JSON
     mode = obj.get("mode", default_mode)
     if mode not in MODES:
         raise SpecError(f"mode must be one of {sorted(MODES)}")
@@ -182,6 +183,22 @@ def idempotency_claim(key, fp):
             return "new", rec
         finally:
             fcntl.flock(lockf, fcntl.LOCK_UN)
+
+
+def idempotency_release(key):
+    """Drop the ledger record so the same key can be legally resubmitted.
+
+    ONLY for tasks that never started executing (e.g. rejected with
+    workspace_busy) — a released key loses its once-only guarantee.
+    """
+    if not key:
+        return
+    h = hashlib.sha256(key.encode()).hexdigest()[:24]
+    for suffix in (".json", ".lock"):
+        try:
+            os.remove(os.path.join(LEDGERS, h + suffix))
+        except FileNotFoundError:
+            pass
 
 
 def idempotency_state(key, fp, state, task_id=None, request_id=None):

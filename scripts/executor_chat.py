@@ -14,7 +14,7 @@ from executor_common import (broker, build_kernel, report, remember_session,
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
-WS = os.environ.get("QAB_WORKSPACE") or os.getcwd()
+WS = os.path.realpath(os.environ.get("QAB_WORKSPACE") or os.getcwd())
 MODE = os.environ.get("QAB_DEFAULT_MODE", "yolo")
 POLICY = os.environ.get("QAB_DEFAULT_POLICY", "allow")
 GUI_TOOLS = ["computer-use", "computer_use", "mcp__computer-use", "cua", "screenshot", "gui"]
@@ -41,6 +41,9 @@ class Chat:
         try:
             snap = self.kernel.submit("zcode", spec["goal"], spec["workspace"], **kwargs)
         except Exception as e:
+            # never reached the queue: release the key so a retry is legal
+            if spec.get("idempotency_key"):
+                broker.idempotency_release(spec["idempotency_key"])
             self.busy = None; report("idle", force=True)
             return self.sig("error", sanitize(f"submit failed: {e}", 200))
         tid = snap.get("task_id")
@@ -55,8 +58,16 @@ class Chat:
         self.sig("accepted", rid, tid, snap.get("status"), spec.get("nonce"))
         return tid
 
+    def _release_if_never_ran(self, spec, data):
+        """workspace_busy means the task never executed; free the idempotency key."""
+        if (data.get("status") == "failed" and spec and spec.get("idempotency_key")
+                and "workspace_busy" in str(data.get("error") or "")):
+            broker.idempotency_release(spec["idempotency_key"])
+
     def background_wait(self, tid, rid, nonce=None):
         """Task still running at wait-timeout: keep busy truthful until terminal."""
+        spec = getattr(self, "active_spec", None)
+        t0 = time.time()
         def waiter():
             while True:
                 snap = self.kernel.wait(tid, timeout_sec=1.0)
@@ -70,7 +81,10 @@ class Chat:
                      "out_of_scope": data["out_of_scope"],
                      "changed_files": data["changed_files"],
                      "summary": data["summary"], "usage": data["usage"]})
+            self._release_if_never_ran(spec, data)
             self.sig("result", rid, tid, nonce or self.current_nonce)
+            self.out(f"[zcodecli:done] {tid} {data['status']} "
+                     f"verify_ok={data['verify_ok']} ({round(time.time() - t0)}s)")
             if data.get("summary"): self.out("[zcodecli:summary] " + sanitize(data["summary"]))
             if self.busy == tid: self.busy = None
             report("idle")
@@ -103,6 +117,7 @@ class Chat:
                 return self.sig("accepted", rec["request_id"], rec.get("task_id") or "-", "duplicate", self.current_nonce)
             rid = rec["request_id"]
         broker.save_request(rid, spec)
+        self.active_spec = spec
         self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {sanitize(spec['goal'],60)}{RST}")
         report("working", sanitize(spec["goal"], 80))
         tid = self.submit(spec, rid)
@@ -146,6 +161,7 @@ class Chat:
             self.out(f"already_terminal ({snap.get('status')}) — task finished during cancel")
         data = collect(snap)
         data["request_id"] = rid
+        self._release_if_never_ran(spec, data)
         if not self.root and tid: self.root = tid
         remember_session(data.get("native_session_id"))
         persist({**snap, "request_id": rid, "status": data["status"],
@@ -154,6 +170,7 @@ class Chat:
                  "changed_files": data["changed_files"],
                  "summary": data["summary"], "usage": data["usage"]})
         self.sig("result", rid, tid, self.current_nonce)
+        self.out(f"[zcodecli:done] {tid} {data['status']} verify_ok={data['verify_ok']}")
         if data.get("summary"): self.out("[zcodecli:summary] " + sanitize(data["summary"]))
         busy_none(self)
         report("idle")

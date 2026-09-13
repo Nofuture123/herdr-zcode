@@ -2,6 +2,8 @@
 
 ## 两种启动形态
 - 会话模式（推荐并行多票）：`zcodecli chat-open` → 一窗一 ZCode 会话，用 `zcodecli --pane <id> send/result` 寻址。
+  ⚠️ 并行多票的前提：**每票独立 workspace 路径**（worktree 或目录别名）。NAR 按 abspath 对同一
+  目录加串行锁，同目录第二票会 `workspace_busy` 被拒（该失败未起跑，不烧 idempotency_key，可直接重派）。
 - 收发台模式：`zcodecli open` → 串行队列窗（label zcode-bridge），直接 `zcodecli send/result`。
 - MCP 加速器（Codex/Claude 已注入）：工具名 zcodecli 的 run/wait/inspect/cancel，语义与 CLI 相同。
 
