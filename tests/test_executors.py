@@ -234,3 +234,25 @@ class TestNativeStream(unittest.TestCase):
         finally:
             os.environ.pop("QAB_EXEC_REASONING", None)
         self.assertEqual([l for l in lines if "hidden" in l], [])
+
+
+class TestNativeFinalText(unittest.TestCase):
+    def test_returns_last_nonempty_message(self):
+        tid = "t-" + "b" * 12
+        logdir = os.path.join(tmp, "narlogs", tid)
+        os.makedirs(logdir, exist_ok=True)
+        with open(os.path.join(logdir, "native-raw.jsonl"), "w") as f:
+            for mid, delta in (("m1", "VERDICT cut off "), ("m2", "VERDICT: PASS\nscore 90")):
+                f.write(json.dumps({"msg": {"method": "session/event", "params": {
+                    "payload": {"kind": "text_delta",
+                                "assistantMessageId": mid, "delta": delta}}}}) + "\n")
+        old = os.environ.get("NAR_LOGS_DIR")
+        os.environ["NAR_LOGS_DIR"] = os.path.join(tmp, "narlogs")
+        try:
+            self.assertEqual(ec.native_final_text(tid), "VERDICT: PASS\nscore 90")
+            self.assertIsNone(ec.native_final_text("t-" + "c" * 12))
+        finally:
+            if old is None:
+                os.environ.pop("NAR_LOGS_DIR", None)
+            else:
+                os.environ["NAR_LOGS_DIR"] = old

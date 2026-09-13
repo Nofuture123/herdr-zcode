@@ -129,6 +129,17 @@ def collect(d):
         "duration_sec": res.get("duration_sec"),
     }
 
+def attach_summary_full(data, task_id):
+    """Recover the FULL last assistant message (NAR caps worker_summary, which
+    can cut verdict lines); stored only when it beats the capped summary."""
+    try:
+        full = native_final_text(task_id)
+    except Exception:
+        full = None
+    if full and len(full) > len(data.get("summary") or ""):
+        data["summary_full"] = full
+    return data
+
 def persist(d):
     tid = d.get("task_id")
     if tid and broker.TASK_RE.match(tid):
@@ -143,6 +154,39 @@ _CYA, _GRN, _RED = "\033[36m", "\033[32m", "\033[31m"
 def native_log_path(task_id):
     base = os.path.expanduser(os.environ.get("NAR_LOGS_DIR", "~/.native-agent-router/logs"))
     return os.path.join(base, task_id, "native-raw.jsonl")
+
+def native_final_text(task_id, cap=4000):
+    """Full text of the LAST assistant message from the native log. NAR caps
+    worker_summary (~800 chars), which can cut verdict lines off the tail;
+    this recovers the complete message. None when unavailable."""
+    path = native_log_path(task_id)
+    if not os.path.exists(path):
+        return None
+    msgs, order = {}, []
+    try:
+        with open(path, "r", errors="replace") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("msg") or {}
+                if msg.get("method") != "session/event":
+                    continue
+                pl = (msg.get("params") or {}).get("payload") or {}
+                if pl.get("kind") == "text_delta" and pl.get("delta"):
+                    mid = pl.get("assistantMessageId") or "?"
+                    if mid not in msgs:
+                        msgs[mid] = []
+                        order.append(mid)
+                    msgs[mid].append(pl["delta"])
+    except OSError:
+        return None
+    for mid in reversed(order):
+        text = "".join(msgs[mid]).strip()
+        if text:
+            return text[:cap]
+    return None
 
 def stream_native_output(task_id, out, stop):
     """Tail the NAR native protocol log and render the agent's live activity
@@ -186,9 +230,10 @@ def stream_native_output(task_id, out, stop):
             emit_line(render(kind, buf))
 
     try:
+        idle_polls = 0
         while not stop.is_set():
             if not os.path.exists(path):
-                stop.wait(0.3)
+                stop.wait(0.5)
                 heartbeat()
                 continue
             with open(path, "r", errors="replace") as f:
@@ -196,9 +241,13 @@ def stream_native_output(task_id, out, stop):
                 chunk = f.read()
                 pos = f.tell()
             if not chunk:
-                stop.wait(0.3)
+                # adaptive backoff: snappy while the log grows, cheap when the
+                # task is silent (long tool runs); display lags pi by <1s max
+                idle_polls += 1
+                stop.wait(0.25 if idle_polls < 8 else 1.0)
                 heartbeat()
                 continue
+            idle_polls = 0
             for line in chunk.splitlines():
                 if not line.strip():
                     continue

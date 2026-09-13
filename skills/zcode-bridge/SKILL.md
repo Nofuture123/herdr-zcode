@@ -79,6 +79,14 @@ while the first runs. For parallel tickets give each its own path: a git worktre
 a distinct directory alias (symlink) of the same project. Scope-disjoint files do NOT lift
 the lock today.
 
+## Review & evidence conventions
+- Review tickets (plan mode): put `VERDICT: PASS` / `VERDICT: FAIL` on the **FIRST line**
+  of the final message — NAR caps worker_summary and tail lines can be cut.
+- Make the workspace a **git repo** (`git init` if needed): non-git workspaces produce
+  empty `changed_files`, so scope evidence is unavailable (the executor warns at submit).
+- `zcodecli result` exposes `summary_full` (the uncapped last assistant message, up to
+  4k chars) in machine output and at `results/<task_id>.json:summary_full` when available.
+
 ## Acceptance rules (never trust "done")
 `zcodecli result` returns status + summary + changed_files + verify output. Accept ONLY if:
 status=succeeded AND verify exited 0 AND changed_files ⊆ scope AND summary matches intent.

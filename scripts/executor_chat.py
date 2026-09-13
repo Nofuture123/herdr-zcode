@@ -11,7 +11,7 @@ import json, os, queue, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
-                             receipt_ok, receipt_err)
+                             receipt_ok, receipt_err, attach_summary_full)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -59,6 +59,9 @@ class Chat:
         self.current_nonce = spec.get("nonce")
         self.sig("accepted", rid, tid, snap.get("status"), spec.get("nonce"))
         receipt_ok(spec.get("nonce"), request_id=rid, task_id=tid, status=snap.get("status"))
+        if not os.path.exists(os.path.join(spec["workspace"], ".git")):
+            self.out(f"{DIM}⚠ workspace is not a git repo — changed_files evidence "
+                     f"will be unavailable{RST}")
         if getattr(self, "_tail", None):
             self._tail.set()   # a pane runs one task at a time; replace the tailer
         self._tail = threading.Event()
@@ -92,12 +95,14 @@ class Chat:
                     break
             data = collect(snap)
             data["request_id"] = rid
+            attach_summary_full(data, tid)
             remember_session(data.get("native_session_id"))
             persist({**snap, "request_id": rid, "status": data["status"],
                      "ok": data["ok"], "verify_ok": data["verify_ok"],
                      "out_of_scope": data["out_of_scope"],
                      "changed_files": data["changed_files"],
-                     "summary": data["summary"], "usage": data["usage"]})
+                     "summary": data["summary"], "usage": data["usage"],
+                     "summary_full": data.get("summary_full")})
             self._release_if_never_ran(spec, data)
             self.stop_tail()
             self.sig("result", rid, tid, nonce or self.current_nonce)
@@ -184,6 +189,7 @@ class Chat:
             self.out(f"already_terminal ({snap.get('status')}) — task finished during cancel")
         data = collect(snap)
         data["request_id"] = rid
+        attach_summary_full(data, tid)
         self._release_if_never_ran(spec, data)
         if not self.root and tid: self.root = tid
         remember_session(data.get("native_session_id"))
@@ -191,7 +197,8 @@ class Chat:
                  "ok": data["ok"], "verify_ok": data["verify_ok"],
                  "out_of_scope": data["out_of_scope"],
                  "changed_files": data["changed_files"],
-                 "summary": data["summary"], "usage": data["usage"]})
+                 "summary": data["summary"], "usage": data["usage"],
+                 "summary_full": data.get("summary_full")})
         self.stop_tail()
         self.sig("result", rid, tid, self.current_nonce)
         self.out(f"[zcodecli:done] {tid} {data['status']} verify_ok={data['verify_ok']}")

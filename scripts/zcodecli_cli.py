@@ -84,8 +84,11 @@ def cmd_chat_open(a):
         if not a.cwd: cwd = os.path.realpath(os.path.expanduser(ws_arg))
         print(f"note: --workspace got a path; using it as --cwd {cwd} (default workspace)", file=sys.stderr)
         ws_arg = None
+    # tab placement: explicit ID > --workspace ID > the caller's own workspace
+    # (masters run inside herdr panes) > herdr's session default
+    ws_id = a.herdr_workspace or ws_arg or os.environ.get("HERDR_WORKSPACE_ID")
     args = ["tab","create","--cwd",cwd,"--label",a.label or f"zcode-chat-{time.strftime('%H%M%S')}"]
-    if ws_arg: args += ["--workspace",ws_arg]
+    if ws_id: args += ["--workspace",ws_id]
     rc, stdout, stderr = herdr(args)
     try:
         d=json.loads(stdout); tab=d["result"]["tab"]
@@ -267,9 +270,15 @@ def cmd_result(a):
         res = full.get("result") or {}
         diff = res.get("diff") or {}
         verifies = res.get("verify") or []
+        summ = (res.get("worker_summary") or "")[:800]
+        # the executor persists the uncapped last assistant message when the
+        # native log was available — prefer it (verdict lines live at the tail)
+        if full.get("summary_full") and len(full["summary_full"]) > len(summ):
+            data["summary_full"] = full["summary_full"]
+            summ = full["summary_full"][:1500]
         data.update({
             "status": full.get("status") or data.get("status"),
-            "summary": (res.get("worker_summary") or "")[:800],
+            "summary": summ,
             "changed_files": diff.get("changed_files") or [],
             "out_of_scope": diff.get("out_of_scope") or [],
             "verify": verifies,
@@ -290,8 +299,10 @@ def cmd_result(a):
     print("├" + "─" * W + "┤")
     import textwrap
     sm = sanitize((data.get("summary") or "(no summary)"), 800)
-    for ln in wrap_dw(sm, W - 6)[:8]:
+    for ln in wrap_dw(sm, W - 6)[:12]:
         print(row("  " + ln))
+    if data.get("summary_full"):
+        print(row(f"{DIM} full summary: results/<task_id>.json:summary_full ({len(data['summary_full'])} chars){RST}"))
     print("├" + "─" * W + "┤")
     cf = data.get("changed_files") or []
     print(row(f"{BOLD} changed files{RST}  {', '.join(cf) if cf else DIM + '(none)' + RST}"))
@@ -357,7 +368,7 @@ p = argparse.ArgumentParser(prog="zcodecli")
 p.add_argument("--pane", default=None, help="target a specific executor/chat pane id (default: the zcode-bridge reception pane)")
 sub = p.add_subparsers(dest="cmd")
 s = sub.add_parser("open"); s.add_argument("--placement", default="tab", choices=["tab", "split", "overlay", "zoomed"]); s.set_defaults(fn=cmd_open)
-s = sub.add_parser("chat-open"); s.add_argument("--workspace", default=None); s.add_argument("--cwd", default=None); s.add_argument("--label", default=None); s.set_defaults(fn=cmd_chat_open)
+s = sub.add_parser("chat-open"); s.add_argument("--workspace", default=None); s.add_argument("--herdr-workspace", default=None, help="herdr workspace ID (e.g. w7Y) for the new tab; default: $HERDR_WORKSPACE_ID"); s.add_argument("--cwd", default=None); s.add_argument("--label", default=None); s.set_defaults(fn=cmd_chat_open)
 s = sub.add_parser("send"); s.add_argument("text"); s.add_argument("--workspace", default=None,
                    help="override workspace (default: caller's cwd)")
 s.add_argument("--raw", action="store_true", help="send text verbatim (no JSON envelope)")
