@@ -11,7 +11,8 @@ import json, os, queue, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
-                             receipt_ok, receipt_err, attach_summary_full, WARN, marker_line)
+                             receipt_ok, receipt_err, attach_summary_full, WARN, marker_line,
+                             display_text)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -109,7 +110,7 @@ class Chat:
             stc = GREEN if data["status"] == "succeeded" else RED
             self.out(marker_line("done", f"{tid} {stc}{data['status']}{RST} "
                      f"verify_ok={data['verify_ok']} ({round(time.time() - t0)}s)"))
-            if data.get("summary"): self.out(marker_line("summary", sanitize(data["summary"])))
+            if data.get("summary"): self.out(marker_line("summary", display_text(data["summary"], 600)))
             if getattr(self, "_tail", None): self._tail.set()
             if self.busy == tid: self.busy = None
             report("idle")
@@ -146,7 +147,7 @@ class Chat:
             rid = rec["request_id"]
         broker.save_request(rid, spec)
         self.active_spec = spec
-        self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {sanitize(spec['goal'],60)}{RST}")
+        self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {display_text(spec['goal'], 60)}{RST}")
         report("working", sanitize(spec["goal"], 80))
         tid = self.submit(spec, rid)
         cancelled_by_us = False
@@ -204,7 +205,7 @@ class Chat:
         self.sig("result", rid, tid, self.current_nonce)
         stc = GREEN if data["status"] == "succeeded" else RED
         self.out(marker_line("done", f"{tid} {stc}{data['status']}{RST} verify_ok={data['verify_ok']}"))
-        if data.get("summary"): self.out(marker_line("summary", sanitize(data["summary"])))
+        if data.get("summary"): self.out(marker_line("summary", display_text(data["summary"], 600)))
         if getattr(self, "_tail", None): self._tail.set()
         busy_none(self)
         report("idle")

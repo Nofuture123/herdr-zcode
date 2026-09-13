@@ -190,6 +190,13 @@ def _inline_md(line):
         line = line.replace("-", "•", 1) if line.lstrip().startswith("- ") else \
                line.replace("*", "•", 1)
     return line
+
+def display_text(line, limit=400):
+    """Sanitized single-line display text: code fences stripped, inline
+    markdown (bold/code) styled. Used for thinking, summaries, goal echoes."""
+    line = sanitize(line, limit)
+    line = _re.sub(r"```[a-zA-Z0-9_-]*", "", line)
+    return _inline_md(line)
 if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
     _C_MUTED = _C_TOOL = _C_OK = _C_ERR = _C_DIM = WARN = ""
 
@@ -321,12 +328,12 @@ def stream_native_output(task_id, out, stop):
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             if line.strip():
-                emit_line(f"{_C_ITAL}· {sanitize(line, 400)}{_RST}")
+                emit_line(f"{_C_ITAL}· {display_text(line)}{_RST}")
             else:
                 gap()
         think_buf[0] = "" if force else buf
         if force and buf.strip():
-            emit_line(f"{_C_ITAL}· {sanitize(buf, 400)}{_RST}")
+            emit_line(f"{_C_ITAL}· {display_text(buf)}{_RST}")
 
     try:
         idle_polls = 0

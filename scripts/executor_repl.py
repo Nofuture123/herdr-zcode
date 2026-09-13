@@ -17,7 +17,8 @@ import json, os, queue, subprocess, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
-                             receipt_ok, receipt_err, attach_summary_full, WARN, marker_line)
+                             receipt_ok, receipt_err, attach_summary_full, WARN, marker_line,
+                             display_text)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -142,7 +143,7 @@ class Reception:
         self.out(marker_line("done", f"{data['task_id']} {stc}{data['status']}{RST} "
                  f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)"))
         if data.get("summary"):
-            self.out(marker_line("summary", sanitize(data["summary"])))
+            self.out(marker_line("summary", display_text(data["summary"], 600)))
         if getattr(self, "_tail", None):
             self._tail.set()
         remember_session(data.get("native_session_id"))
@@ -161,7 +162,7 @@ class Reception:
 
     def run_task(self, spec, rid):
         self.active_spec, self.active_request = spec, rid
-        self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {sanitize(spec['goal'],60)}{RST}")
+        self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {display_text(spec['goal'], 60)}{RST}")
         report("working", sanitize(spec["goal"], 80))
         tid = self.submit(spec, rid)
         snap, dur = self.poll(tid, time.time() + spec["timeout"])
