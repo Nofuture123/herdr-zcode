@@ -136,7 +136,8 @@ def attach_summary_full(data, task_id):
         full = native_final_text(task_id)
     except Exception:
         full = None
-    if full and len(full) > len(data.get("summary") or ""):
+    full = (full or "").strip()
+    if full and full != (data.get("summary") or "").strip():
         data["summary_full"] = full
     return data
 

@@ -80,8 +80,13 @@ a distinct directory alias (symlink) of the same project. Scope-disjoint files d
 the lock today.
 
 ## Review & evidence conventions
-- Review tickets (plan mode): put `VERDICT: PASS` / `VERDICT: FAIL` on the **FIRST line**
-  of the final message — NAR caps worker_summary and tail lines can be cut.
+- Review tickets that must RUN the tests: use `mode:"edit"` with
+  `"verify":"python3 -m unittest discover -p test_*.py"` — verify is the permission to
+  execute, and `verify_ok` becomes hard evidence. Plan mode BLOCKS Bash: a plan-mode
+  reviewer cannot run the suite and will end its turn asking for approval instead of
+  issuing a verdict. Use plan mode only for purely static reviews.
+- Put `VERDICT: PASS` / `VERDICT: FAIL` on the **FIRST line** of the final message —
+  NAR caps worker_summary and tail lines can be cut (`summary_full` recovers it).
 - Make the workspace a **git repo** (`git init` if needed): non-git workspaces produce
   empty `changed_files`, so scope evidence is unavailable (the executor warns at submit).
 - `zcodecli result` exposes `summary_full` (the uncapped last assistant message, up to
