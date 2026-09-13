@@ -174,22 +174,23 @@ def _plain(sx):
 
 
 class TestNativeStream(unittest.TestCase):
-    def _run_stream(self, events, stop_after=4):
+    def _run_stream(self, events, stop_after):
         tid = "t-" + "a" * 12
         logdir = os.path.join(tmp, "narlogs", tid)
         os.makedirs(logdir, exist_ok=True)
         with open(os.path.join(logdir, "native-raw.jsonl"), "w") as f:
             for ev in events:
-                f.write(json.dumps({"t": 0, "dir": "in",
-                                    "msg": {"method": "session/event",
+                f.write(json.dumps({"msg": {"method": "session/event",
                                             "params": {"payload": ev}}}) + "\n")
         old = os.environ.get("NAR_LOGS_DIR")
         os.environ["NAR_LOGS_DIR"] = os.path.join(tmp, "narlogs")
         lines, stop = [], threading.Event()
-        def out(s):
-            lines.append(s)
-            if len(lines) >= stop_after:
+
+        def out(sx):
+            lines.append(sx)
+            if len([x for x in lines if x.strip()]) >= stop_after:
                 stop.set()
+
         try:
             ec.stream_native_output(tid, out, stop)
         finally:
@@ -197,48 +198,62 @@ class TestNativeStream(unittest.TestCase):
                 os.environ.pop("NAR_LOGS_DIR", None)
             else:
                 os.environ["NAR_LOGS_DIR"] = old
-        return lines
+        return [x for x in lines if x.strip()]
 
     def test_renders_text_tools_and_results(self):
-        lines = self._run_stream([
+        nb = self._run_stream([
             {"kind": "text_delta", "delta": "你好\n世界"},
             {"kind": "tool_call", "toolName": "Bash",
              "input": {"command": "ls -la /x"}},
             {"kind": "result", "toolCallId": "c1",
              "result": {"success": True, "content": "total 40\nfoo"}},
-        ])
-        self.assertEqual(lines[0], "你好")
-        self.assertEqual(_plain(lines[1]), "世界")
-        self.assertIn("▸ Bash: ls -la /x", _plain(lines[2]))
-        self.assertTrue(_plain(lines[3]).startswith("  ✓"))
-
-    def test_quiet_env_mutes_streaming(self):
-        os.environ["QAB_EXEC_QUIET"] = "1"
-        try:
-            lines = self._run_stream(
-                [{"kind": "text_delta", "delta": "hi"}])
-        finally:
-            os.environ.pop("QAB_EXEC_QUIET", None)
-        self.assertEqual(lines, [])
+        ], stop_after=4)
+        self.assertEqual(nb[0], "你好")
+        self.assertEqual(nb[1], "世界")
+        self.assertIn("▸ Bash: ls -la /x", nb[2])
+        self.assertIn("✓", nb[3])
+        self.assertIn("└", nb[3])
 
     def test_reasoning_renders_dim_and_mutable(self):
-        lines = self._run_stream([
+        nb = self._run_stream([
             {"kind": "reasoning_delta", "delta": "先想清楚\n再动手"},
             {"kind": "text_delta", "delta": "答案"},
-            {"kind": "tool_call", "toolName": "Bash", "input": {"command": "true"}},
-        ], stop_after=4)
-        self.assertEqual(_plain(lines[0]), "· 先想清楚")
-        self.assertEqual(lines[1], "答案")
-        self.assertEqual(_plain(lines[2]), "· 再动手")
-        self.assertIn("▸ Bash: true", _plain(lines[3]))
+            {"kind": "tool_call", "toolName": "Bash",
+             "input": {"command": "true"}},
+        ], stop_after=5)
+        self.assertEqual(_plain(nb[0]), "── thinking ──")
+        self.assertEqual(_plain(nb[1]), "· 先想清楚")
+        self.assertEqual(_plain(nb[2]), "· 再动手")
+        self.assertEqual(_plain(nb[3]), "答案")
+        self.assertIn("▸ Bash: true", _plain(nb[4]))
         os.environ["QAB_EXEC_REASONING"] = "0"
         try:
-            lines = self._run_stream(
+            nb = self._run_stream(
                 [{"kind": "reasoning_delta", "delta": "hidden"},
                  {"kind": "text_delta", "delta": "答案"}], stop_after=1)
         finally:
             os.environ.pop("QAB_EXEC_REASONING", None)
-        self.assertEqual([l for l in lines if "hidden" in l], [])
+        self.assertNotIn("hidden", " ".join(nb))
+
+    def test_quiet_env_mutes_streaming(self):
+        os.environ["QAB_EXEC_QUIET"] = "1"
+        try:
+            nb = self._run_stream(
+                [{"kind": "text_delta", "delta": "hi"}], stop_after=1)
+        finally:
+            os.environ.pop("QAB_EXEC_QUIET", None)
+        self.assertEqual(nb, [])
+
+    def test_fenced_code_renders_as_block(self):
+        nb = self._run_stream([
+            {"kind": "text_delta", "delta": "看代码:\n```python\nx = 1\n```\n完"},
+        ], stop_after=5)
+        self.assertEqual(_plain(nb[0]), "看代码:")
+        self.assertTrue(_plain(nb[1]).startswith("╭──"))
+        self.assertIn("code", nb[1])
+        self.assertIn("1 │ x = 1", _plain(nb[2]))
+        self.assertTrue(_plain(nb[3]).startswith("╰──"))
+        self.assertEqual(nb[4], "完")
 
 
 class TestNativeFinalText(unittest.TestCase):
@@ -261,3 +276,39 @@ class TestNativeFinalText(unittest.TestCase):
                 os.environ.pop("NAR_LOGS_DIR", None)
             else:
                 os.environ["NAR_LOGS_DIR"] = old
+
+
+class TestCodeBlocks(unittest.TestCase):
+    def test_fenced_code_renders_as_block(self):
+        lines = []
+        stop = threading.Event()
+
+        def out(sx):
+            lines.append(_plain(sx))
+            if len(lines) >= 5:
+                stop.set()
+
+        tid = "t-" + "d" * 12
+        logdir = os.path.join(tmp, "narlogs", tid)
+        os.makedirs(logdir, exist_ok=True)
+        with open(os.path.join(logdir, "native-raw.jsonl"), "w") as f:
+            f.write(json.dumps({"msg": {"method": "session/event", "params": {
+                "payload": {"kind": "text_delta", "assistantMessageId": "m1",
+                            "delta": "看代码:\n```python\nx = 1\n```\n完"}}}}) + "\n")
+        old = os.environ.get("NAR_LOGS_DIR")
+        os.environ["NAR_LOGS_DIR"] = os.path.join(tmp, "narlogs")
+        try:
+            ec.stream_native_output(tid, out, stop)
+        finally:
+            if old is None:
+                os.environ.pop("NAR_LOGS_DIR", None)
+            else:
+                os.environ["NAR_LOGS_DIR"] = old
+        nb = [x for x in lines if x.strip()]
+        self.assertIn("完", nb)
+        self.assertEqual(_plain(nb[0]), "看代码:")
+        self.assertTrue(_plain(nb[1]).startswith("╭──"))
+        self.assertIn("code", nb[1])
+        self.assertIn("1 │ x = 1", _plain(nb[2]))
+        self.assertTrue(_plain(nb[3]).startswith("╰──"))
+        self.assertEqual(nb[4], "完")

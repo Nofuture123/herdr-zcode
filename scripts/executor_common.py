@@ -156,6 +156,9 @@ _C_TOOL = "\033[38;2;183;245;176m"     # toolTitle  #b7f5b0
 _C_OK = "\033[38;2;159;245;200m"       # success    #9ff5c8
 _C_ERR = "\033[38;2;255;123;147m"      # error      #ff7b93
 _C_DIM = "\033[38;2;101;125;98m"       # dim        #657d62
+_C_DEEP = "\033[38;2;47;158;68m"       # accentDeep #2f9e44 (code-block border)
+_C_HEAD = "\033[38;2;183;245;176m"     # mdHeading  #b7f5b0
+_C_ITAL = "\033[2;3;38;2;157;187;155m"  # dim+italic muted (thinking)
 WARN = "\033[38;2;214;198;95m"         # warning    #d6c65f
 if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
     _C_MUTED = _C_TOOL = _C_OK = _C_ERR = _C_DIM = WARN = ""
@@ -199,44 +202,85 @@ def native_final_text(task_id, cap=4000):
 
 def stream_native_output(task_id, out, stop):
     """Tail the NAR native protocol log and render the agent's live activity
-    into the pane, pi-CLI style: dim rule with elapsed seconds as a heartbeat,
-    reasoning in dim `·` lines, assistant text plain, cyan `▸` tool lines and
-    short ✓/✗ result lines. Best-effort — unknown events are ignored, and the
-    marker/receipt protocol is untouched. QAB_EXEC_QUIET=1 mutes everything;
-    QAB_EXEC_REASONING=0 mutes reasoning."""
+    into the pane, pi-CLI style: italic muted thinking with an opener rule,
+    blank-line paragraph spacing, fenced code as a numbered bordered block,
+    cyan-free accent tool lines with `└ ✓` summary results, and a heartbeat.
+    QAB_EXEC_QUIET=1 mutes everything; QAB_EXEC_REASONING=0 mutes thinking."""
     if not task_id or os.environ.get("QAB_EXEC_QUIET", "") == "1" \
             or not broker.TASK_RE.match(task_id):
         return
     show_reasoning = os.environ.get("QAB_EXEC_REASONING", "") != "0"
     path = native_log_path(task_id)
     pos = 0
-    bufs = {"text": "", "reasoning": ""}
+    text_buf = [""]
+    think_buf = [""]
+    in_code = [False]
+    code_no = [0]
+    thinking_open = [False]
+    cur_mid = [None]
+    last_blank = [True]
     t0 = time.time()
     last_emit = [t0]
 
+    def raw(sx):
+        out(sx)
+
+    def emit_line(sx):
+        last_emit[0] = time.time()
+        last_blank[0] = False
+        raw(sx)
+
+    def gap():
+        if not last_blank[0]:
+            raw("")
+            last_blank[0] = True
+
     def heartbeat():
+        if os.environ.get("QAB_EXEC_HEARTBEAT") != "1":
+            return
         now = time.time()
         if now - last_emit[0] >= 20:
             last_emit[0] = now
-            out(f"{_C_DIM}── {int(now - t0)}s ──{_RST}")
+            gap()
+            raw(f"{_C_DIM}── {int(now - t0)}s ──{_RST}")
+            last_blank[0] = True
 
-    def render(kind, line):
+    def render_text(line):
         line = sanitize(line, 400)
-        return f"{_C_MUTED}· {line}{_RST}" if kind == "reasoning" else line
+        if line.lstrip().startswith("```"):
+            if in_code[0]:
+                in_code[0] = False
+                return f"{_C_DEEP}╰{'─' * 8}{_RST}"
+            gap()
+            in_code[0] = True
+            code_no[0] = 0
+            return f"{_C_DEEP}╭{'─' * 4} code {'─' * 4}{_RST}"
+        if in_code[0]:
+            code_no[0] += 1
+            return f"{_C_DEEP}{code_no[0]:>3} │{_RST} {line}"
+        if line.startswith("#"):
+            return f"{_C_HEAD}{line}{_RST}"
+        return line
 
-    def emit_line(s):
-        last_emit[0] = time.time()
-        out(s)
-
-    def flush(kind, force=False):
-        buf = bufs[kind]
+    def flush_text(force=False):
+        buf = text_buf[0]
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             if line.strip():
-                emit_line(render(kind, line))
-        bufs[kind] = "" if force else buf
+                emit_line(render_text(line))
+        text_buf[0] = "" if force else buf
         if force and buf.strip():
-            emit_line(render(kind, buf))
+            emit_line(render_text(buf))
+
+    def flush_think(force=False):
+        buf = think_buf[0]
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            if line.strip():
+                emit_line(f"{_C_ITAL}· {sanitize(line, 400)}{_RST}")
+        think_buf[0] = "" if force else buf
+        if force and buf.strip():
+            emit_line(f"{_C_ITAL}· {sanitize(buf, 400)}{_RST}")
 
     try:
         idle_polls = 0
@@ -250,9 +294,12 @@ def stream_native_output(task_id, out, stop):
                 chunk = f.read()
                 pos = f.tell()
             if not chunk:
-                # adaptive backoff: snappy while the log grows, cheap when the
-                # task is silent (long tool runs); display lags pi by <1s max
                 idle_polls += 1
+                if idle_polls >= 5 and (text_buf[0] or think_buf[0]):
+                    # stream quiet ~1.3s: flush partial last lines so the tail
+                    # of a message is visible without waiting for task end
+                    flush_text(force=True)
+                    flush_think(force=True)
                 stop.wait(0.25 if idle_polls < 8 else 1.0)
                 heartbeat()
                 continue
@@ -270,14 +317,31 @@ def stream_native_output(task_id, out, stop):
                 pl = (msg.get("params") or {}).get("payload") or {}
                 kind = pl.get("kind") or pl.get("type")
                 if kind == "text_delta" and pl.get("delta"):
-                    bufs["text"] += pl["delta"]
-                    flush("text")
+                    mid = pl.get("assistantMessageId")
+                    if mid != cur_mid[0]:
+                        if in_code[0]:
+                            in_code[0] = False
+                            emit_line(f"{_C_DEEP}╰{'─' * 8}{_RST}")
+                        cur_mid[0] = mid
+                    if think_buf[0]:
+                        flush_think(force=True)   # keep thinking before its answer
+                    if thinking_open[0]:
+                        thinking_open[0] = False
+                        gap()
+                    text_buf[0] += pl["delta"]
+                    flush_text()
                 elif kind == "reasoning_delta" and pl.get("delta") and show_reasoning:
-                    bufs["reasoning"] += pl["delta"]
-                    flush("reasoning")
+                    if not thinking_open[0]:
+                        gap()
+                        thinking_open[0] = True
+                        emit_line(f"{_C_DIM}── thinking ──{_RST}")
+                    think_buf[0] += pl["delta"]
+                    flush_think()
                 elif kind == "tool_call":
-                    flush("text", force=True)
-                    flush("reasoning", force=True)
+                    flush_text(force=True)
+                    flush_think(force=True)
+                    thinking_open[0] = False
+                    gap()
                     name = pl.get("toolName") or "?"
                     inp = pl.get("input") or {}
                     head = (inp.get("command") or inp.get("file_path")
@@ -288,12 +352,14 @@ def stream_native_output(task_id, out, stop):
                     r = pl["result"]
                     content = str(r.get("content") or "").replace("\n", " ⏎ ")
                     if r.get("success"):
-                        emit_line(f"  {_C_OK}✓{_RST} {_C_DIM}{sanitize(content, 120)}{_RST}")
+                        emit_line(f"  {_C_DIM}└{_RST} {_C_OK}✓{_RST} {_C_DIM}{sanitize(content, 120)}{_RST}")
                     else:
-                        emit_line(f"  {_C_ERR}✗{_RST} {sanitize(content, 240)}")
+                        emit_line(f"  {_C_DIM}└{_RST} {_C_ERR}✗{_RST} {sanitize(content, 240)}")
                 else:
                     continue
                 heartbeat()
     finally:
-        flush("text", force=True)
-        flush("reasoning", force=True)
+        flush_text(force=True)
+        flush_think(force=True)
+        if in_code[0]:
+            emit_line(f"{_C_DEEP}╰{'─' * 8}{_RST}")
