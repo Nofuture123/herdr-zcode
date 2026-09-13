@@ -61,6 +61,8 @@ class TestReception(unittest.TestCase):
 
     def test_submit_receipt_and_facts(self):
         k, buf, r = self.make()
+        self.addCleanup(os.environ.pop, "QAB_EXEC_MARKERS", None)
+        os.environ["QAB_EXEC_MARKERS"] = "1"
         r.start(json.dumps({"goal": "do it", "workspace": WS, "mode": "yolo",
                             "verify": "true", "idempotency_key": "t1"}))
         import re as _rp
@@ -140,6 +142,8 @@ class TestChat(unittest.TestCase):
 
     def test_turn_receipt_nonce_and_facts(self):
         k, buf, c = self.make()
+        self.addCleanup(os.environ.pop, "QAB_EXEC_MARKERS", None)
+        os.environ["QAB_EXEC_MARKERS"] = "1"
         c.run_turn(json.dumps({"goal": "hi", "workspace": WS, "mode": "plan",
                                "nonce": "n-abcd1234", "idempotency_key": "ch1"}))
         import re as _rp
@@ -280,6 +284,24 @@ class TestNativeFinalText(unittest.TestCase):
                 os.environ["NAR_LOGS_DIR"] = old
 
 
+
+
+class TestMarkerVisibility(unittest.TestCase):
+    def make(self):
+        k = FakeKernel(); buf = io.StringIO()
+        r = er.Reception(k, out=lambda s=None: buf.write((s or "") + "\n"))
+        r.q = queue.Queue()
+        return k, buf, r
+
+    def test_accepted_hidden_by_default_but_receipt_written(self):
+        k, buf, r = self.make()
+        r.start(json.dumps({"goal": "do it", "workspace": WS, "mode": "plan",
+                            "idempotency_key": "mv1", "nonce": "n-mv1"}))
+        self.assertNotIn("[zcodecli:accepted]", buf.getvalue())
+        self.assertIn("[zcodecli:result]", buf.getvalue())   # result stays visible
+        from executor_common import marker_line
+        self.assertIsNone(marker_line("ready"))
+        self.assertIsNotNone(marker_line("done"))
 
 
 class TestMarkdownFull(unittest.TestCase):

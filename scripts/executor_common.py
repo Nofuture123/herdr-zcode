@@ -95,13 +95,23 @@ def sanitize(text, limit=600):
 # so client parsing by the plain [zcodecli:...] prefix keeps working)
 _SIGC = {"done": "\033[1;38;2;159;245;200m", "accepted": "\033[38;2;159;245;200m",
          "error": "\033[38;2;255;123;147m", "result": "\033[36m",
-         "ready": "\033[38;2;101;125;98m", "summary": "\033[2m",
+         "ready": "\033[38;2;101;125;98m",
+         "summary": "\033[2;38;2;101;125;98m",
          "wait_timeout": "\033[33m"}
 if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
     _SIGC = {}
 
+# Pane markers are for HUMANS; machines read receipts/ + results/. By default
+# only state changes worth a human's eye are shown; QAB_EXEC_MARKERS=1 shows all.
+_HIDDEN_MARKERS = {"ready", "accepted", "summary", "wait_timeout"}
+
 def marker_line(kind, body=""):
+    if kind in _HIDDEN_MARKERS and os.environ.get("QAB_EXEC_MARKERS") != "1":
+        return None
     c = _SIGC.get(kind, "")
+    if kind == "summary":   # machine receipt for agents: fully dimmed, short
+        return f"{c}[zcodecli:summary]{_RST}{c} {body}{_RST}" if c else \
+               f"[zcodecli:summary] {body}"
     return f"{c}[zcodecli:{kind}]{_RST} {body}" if c else f"[zcodecli:{kind}] {body}"
 
 def emit(out, kind, payload):

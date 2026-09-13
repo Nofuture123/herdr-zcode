@@ -29,7 +29,9 @@ class Chat:
         self.current_nonce = None; self.current_rid = None
 
     def sig(self, kind, *fields):
-        self.out(marker_line(kind, " ".join(str(f) for f in fields)))
+        line = marker_line(kind, " ".join(str(f) for f in fields))
+        if line:
+            self.out(line)
 
     def submit(self, spec, rid):
         if spec.get("idempotency_key"):
@@ -110,7 +112,9 @@ class Chat:
             stc = GREEN if data["status"] == "succeeded" else RED
             self.out(marker_line("done", f"{tid} {stc}{data['status']}{RST} "
                      f"verify_ok={data['verify_ok']} ({round(time.time() - t0)}s)"))
-            if data.get("summary"): self.out(marker_line("summary", display_text(data["summary"], 600)))
+            line = marker_line("summary", display_text(data["summary"], 200))
+            if line:
+                self.out(line)
             if getattr(self, "_tail", None): self._tail.set()
             if self.busy == tid: self.busy = None
             report("idle")
@@ -205,7 +209,9 @@ class Chat:
         self.sig("result", rid, tid, self.current_nonce)
         stc = GREEN if data["status"] == "succeeded" else RED
         self.out(marker_line("done", f"{tid} {stc}{data['status']}{RST} verify_ok={data['verify_ok']}"))
-        if data.get("summary"): self.out(marker_line("summary", display_text(data["summary"], 600)))
+        line = marker_line("summary", display_text(data["summary"], 200))
+        if line:
+            self.out(line)
         if getattr(self, "_tail", None): self._tail.set()
         busy_none(self)
         report("idle")

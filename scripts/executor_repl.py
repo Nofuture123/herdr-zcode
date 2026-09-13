@@ -41,11 +41,15 @@ class Reception:
 
     # -- markers: identifiers only, no business verdicts --
     def sig_accepted(self, rid, tid, state, nonce=None):
-        self.out(marker_line("accepted", f"{rid} {tid} {state}" + (f" {nonce}" if nonce else "")))
+        line = marker_line("accepted", f"{rid} {tid} {state}" + (f" {nonce}" if nonce else ""))
+        if line:
+            self.out(line)
         receipt_ok(nonce, request_id=rid, task_id=tid, status=state)
 
     def sig_result(self, rid, tid):
-        self.out(marker_line("result", f"{rid} {tid}"))
+        line = marker_line("result", f"{rid} {tid}")
+        if line:
+            self.out(line)
 
     def sig_error(self, msg, nonce=None):
         nonce = nonce or self.current_nonce
@@ -142,8 +146,9 @@ class Reception:
         stc = GREEN if data["status"] == "succeeded" else RED
         self.out(marker_line("done", f"{data['task_id']} {stc}{data['status']}{RST} "
                  f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)"))
-        if data.get("summary"):
-            self.out(marker_line("summary", display_text(data["summary"], 600)))
+        line = marker_line("summary", display_text(data["summary"], 200))
+        if line:
+            self.out(line)
         if getattr(self, "_tail", None):
             self._tail.set()
         remember_session(data.get("native_session_id"))
