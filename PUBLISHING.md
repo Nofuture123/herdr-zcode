@@ -14,8 +14,10 @@ gh repo edit Nofuture123/herdr-zcode --visibility public --accept-visibility-cha
 gh repo edit Nofuture123/herdr-zcode --add-topic herdr-plugin
 ```
 
-注意:manifest 含 [[build]]（前置检查 + 联网 bootstrap NAR 固定 commit）与 [[startup]]，
-安装/启用时会执行并联网，发布页说明里必须披露这一点，以及执行器默认 yolo 全权限。
+注意:manifest 含 [[build]]（前置检查 + ZCode 登录态硬性校验 + 联网 bootstrap NAR 固定 commit）
+与 [[startup]]，安装/启用时会执行并联网，发布页说明里必须披露这一点，以及执行器默认 yolo 全权限。
+登录校验读 `~/.zcode/v2/credentials.json` 的 `oauth:*:access_token` 键（provider 段可能是 zai/bigmodel），
+未登录即中止安装并给出 `zcode login` 三步指引。
 
 ## 发布后验证
 

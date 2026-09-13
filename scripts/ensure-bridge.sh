@@ -26,6 +26,14 @@ mkdir -p "$BASE" "$BIN"
   fi
   [ -n "$ZCODE_BIN" ] && echo "zcode_bin: $ZCODE_BIN" || echo "zcode_bin: NOT FOUND"
 
+  # Login state (informational here; plugin-build.sh hard-gates it at install).
+  CRED_FILE="${ZCODE_DATA_BASE_DIR:-$HOME}/.zcode/v2/credentials.json"
+  if [ -f "$CRED_FILE" ] && grep -q '"oauth:[a-z][a-z0-9_]*:access_token"' "$CRED_FILE"; then
+    echo "zcode_login: ok"
+  else
+    echo "zcode_login: NOT LOGGED IN (run: zcode login)"
+  fi
+
   # Herdr runs plugin commands with a minimal PATH; resolve node/python absolutely
   NODE_BIN="$(command -v node || true)"
   [ -n "$NODE_BIN" ] || for c in /opt/homebrew/bin/node /usr/local/bin/node; do [ -x "$c" ] && NODE_BIN="$c" && break; done

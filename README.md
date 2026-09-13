@@ -13,7 +13,9 @@ ZCode in Herdr, two ways:
 ```bash
 herdr plugin install Nofuture123/herdr-zcode
 ```
-Build-time prereq checks: Herdr, Node >= 22, python3, git, ZCode executor.
+Build-time prereq checks: Herdr, Node >= 22, python3, git, ZCode executor, and that ZCode is
+**logged in** (`~/.zcode/v2/credentials.json` must contain OAuth tokens — if not, run
+`zcode login` first; the installer fails with these exact instructions).
 
 ## ⚠️ Permissions (read before installing)
 The delegation executor runs ZCode with **full user permissions by default** (yolo + auto-approve,
