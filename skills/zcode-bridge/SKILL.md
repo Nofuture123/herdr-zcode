@@ -89,6 +89,9 @@ the lock today.
   NAR caps worker_summary and tail lines can be cut (`summary_full` recovers it).
 - Make the workspace a **git repo** (`git init` if needed): non-git workspaces produce
   empty `changed_files`, so scope evidence is unavailable (the executor warns at submit).
+- **Commit between tickets.** `changed_files` diffs against HEAD: an uncommitted
+  previous ticket leaks into the next ticket's changed_files and poisons scope
+  evidence. Master commits after accepting each ticket.
 - `zcodecli result` exposes `summary_full` (the uncapped last assistant message, up to
   4k chars) in machine output and at `results/<task_id>.json:summary_full` when available.
 
