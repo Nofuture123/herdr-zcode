@@ -384,16 +384,24 @@ def stream_native_output(task_id, out, stop):
                 emit_line(rendered)
 
     def flush_think(force=False):
+        # Inline markdown inserts resets after code/bold spans; re-enter the
+        # thinking style after each one so the whole line stays dim-italic.
+        think_style = _C_ITAL
         buf = think_buf[0]
+
+        def emit_think(text):
+            styled = display_text(text).replace("\033[0m", "\033[0m" + think_style)
+            emit_line(f"{think_style}· {styled}{_RST}")
+
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             if line.strip():
-                emit_line(f"{_C_ITAL}· {display_text(line)}{_RST}")
+                emit_think(line)
             else:
                 gap()
         think_buf[0] = "" if force else buf
         if force and buf.strip():
-            emit_line(f"{_C_ITAL}· {display_text(buf)}{_RST}")
+            emit_think(buf)
 
     try:
         idle_polls = 0
