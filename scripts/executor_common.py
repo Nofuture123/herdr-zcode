@@ -148,8 +148,16 @@ def persist(d):
         os.chmod(broker.result_path(tid), 0o600)
 
 # ---------- live native output streaming ----------
-_DIM, _RST = "\033[2m", "\033[0m"
-_CYA, _GRN, _RED = "\033[36m", "\033[32m", "\033[31m"
+# Palette: pi's "enchanted-forest" theme (awesome-pi-themes), truecolor.
+_RST = "\033[0m"
+_C_MUTED = "\033[38;2;157;187;155m"    # thinkingText #9dbb9b
+_C_TOOL = "\033[38;2;183;245;176m"     # toolTitle  #b7f5b0
+_C_OK = "\033[38;2;159;245;200m"       # success    #9ff5c8
+_C_ERR = "\033[38;2;255;123;147m"      # error      #ff7b93
+_C_DIM = "\033[38;2;101;125;98m"       # dim        #657d62
+WARN = "\033[38;2;214;198;95m"         # warning    #d6c65f
+if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
+    _C_MUTED = _C_TOOL = _C_OK = _C_ERR = _C_DIM = WARN = ""
 
 def native_log_path(task_id):
     base = os.path.expanduser(os.environ.get("NAR_LOGS_DIR", "~/.native-agent-router/logs"))
@@ -209,11 +217,11 @@ def stream_native_output(task_id, out, stop):
         now = time.time()
         if now - last_emit[0] >= 20:
             last_emit[0] = now
-            out(f"{_DIM}── {int(now - t0)}s ──{_RST}")
+            out(f"{_C_DIM}── {int(now - t0)}s ──{_RST}")
 
     def render(kind, line):
         line = sanitize(line, 400)
-        return f"{_DIM}· {line}{_RST}" if kind == "reasoning" else line
+        return f"{_C_MUTED}· {line}{_RST}" if kind == "reasoning" else line
 
     def emit_line(s):
         last_emit[0] = time.time()
@@ -274,14 +282,14 @@ def stream_native_output(task_id, out, stop):
                     head = (inp.get("command") or inp.get("file_path")
                             or inp.get("path") or inp.get("pattern")
                             or json.dumps(inp, ensure_ascii=False))
-                    emit_line(f"{_CYA}▸ {sanitize(name, 40)}: {sanitize(head, 160)}{_RST}")
+                    emit_line(f"{_C_TOOL}▸ {sanitize(name, 40)}: {sanitize(head, 160)}{_RST}")
                 elif kind == "result" and isinstance(pl.get("result"), dict):
                     r = pl["result"]
                     content = str(r.get("content") or "").replace("\n", " ⏎ ")
                     if r.get("success"):
-                        emit_line(f"  {_GRN}✓{_RST} {_DIM}{sanitize(content, 120)}{_RST}")
+                        emit_line(f"  {_C_OK}✓{_RST} {_C_DIM}{sanitize(content, 120)}{_RST}")
                     else:
-                        emit_line(f"  {_RED}✗{_RST} {sanitize(content, 240)}")
+                        emit_line(f"  {_C_ERR}✗{_RST} {sanitize(content, 240)}")
                 else:
                     continue
                 heartbeat()

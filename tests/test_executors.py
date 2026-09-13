@@ -168,6 +168,11 @@ class TestChat(unittest.TestCase):
         self.assertEqual(k.submits, [])
 
 
+def _plain(sx):
+    import re as _re2
+    return _re2.sub(r"\033\[[0-9;]*m", "", sx)
+
+
 class TestNativeStream(unittest.TestCase):
     def _run_stream(self, events, stop_after=4):
         tid = "t-" + "a" * 12
@@ -203,9 +208,9 @@ class TestNativeStream(unittest.TestCase):
              "result": {"success": True, "content": "total 40\nfoo"}},
         ])
         self.assertEqual(lines[0], "你好")
-        self.assertEqual(lines[1], "世界")
-        self.assertIn("▸ Bash: ls -la /x", lines[2])
-        self.assertTrue(lines[3].startswith("  ") and "✓" in lines[3])
+        self.assertEqual(_plain(lines[1]), "世界")
+        self.assertIn("▸ Bash: ls -la /x", _plain(lines[2]))
+        self.assertTrue(_plain(lines[3]).startswith("  ✓"))
 
     def test_quiet_env_mutes_streaming(self):
         os.environ["QAB_EXEC_QUIET"] = "1"
@@ -222,10 +227,10 @@ class TestNativeStream(unittest.TestCase):
             {"kind": "text_delta", "delta": "答案"},
             {"kind": "tool_call", "toolName": "Bash", "input": {"command": "true"}},
         ], stop_after=4)
-        self.assertTrue(lines[0].startswith("\033[2m· 先想清楚"))
+        self.assertEqual(_plain(lines[0]), "· 先想清楚")
         self.assertEqual(lines[1], "答案")
-        self.assertTrue(lines[2].startswith("\033[2m· 再动手"))
-        self.assertIn("▸ Bash: true", lines[3])
+        self.assertEqual(_plain(lines[2]), "· 再动手")
+        self.assertIn("▸ Bash: true", _plain(lines[3]))
         os.environ["QAB_EXEC_REASONING"] = "0"
         try:
             lines = self._run_stream(

@@ -17,7 +17,7 @@ import json, os, queue, subprocess, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
-                             receipt_ok, receipt_err, attach_summary_full)
+                             receipt_ok, receipt_err, attach_summary_full, WARN)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -80,7 +80,7 @@ class Reception:
         self.current_nonce = spec.get("nonce")
         self.sig_accepted(rid, tid, snap.get("status"), spec.get("nonce"))
         if not os.path.exists(os.path.join(spec["workspace"], ".git")):
-            self.out(f"{DIM}⚠ workspace is not a git repo — changed_files evidence "
+            self.out(f"{WARN}⚠ workspace is not a git repo — changed_files evidence "
                      f"will be unavailable{RST}")
         if getattr(self, "_tail", None):
             self._tail.set()
