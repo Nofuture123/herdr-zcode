@@ -1,6 +1,6 @@
 id = "zcode"
 name = "ZCode"
-version = "0.3.2"
+version = "0.3.3"
 min_herdr_version = "0.8.0"
 description = "ZCode in Herdr: TUI panes + a delegation bridge (any CLI agent -> native ZCode executor)"
 platforms = ["macos", "linux"]

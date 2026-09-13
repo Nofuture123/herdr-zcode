@@ -152,30 +152,41 @@ def cmd_send(a):
         return 0
     # Receipt wait: the executor persists an ack to the receipts dir (fold-proof);
     # pane markers on both sources are the fallback for older executors.
-    deadline = time.time() + 15
+    t0 = time.time()
+    deadline = t0 + 15
     receipt = None
+    marks = []
     while time.time() < deadline:
         receipt = broker.load_receipt(nonce)
         if receipt:
             break
-        _, out3, _ = herdr(["pane", "read", pid, "--source", "recent-unwrapped",
-                            "--lines", "200"])
-        marks = [l for l in (out3 or "").splitlines()
-                 if nonce in l and ("[zcodecli:accepted]" in l or "[zcodecli:error]" in l)]
-        if not marks:
-            # viewport fallback: the nonce may sit in a soft-wrapped line, so
-            # match around it instead of requiring one clean line
-            _, outv, _ = herdr(["pane", "read", pid, "--source", "visible", "--lines", "200"])
-            vis = outv or ""
-            if nonce in vis:
-                i = vis.find(nonce)
-                m = vis.rfind("[zcodecli:error]", max(0, i - 300), i)
-                if m == -1:
-                    m = vis.rfind("[zcodecli:accepted]", max(0, i - 300), i)
-                if m != -1:
-                    marks.append(vis[m:i + len(nonce) + 2])
-        if marks:
-            break
+        # v0.3.2+ executors answer on disk within ~1s; only fall back to pane
+        # heuristics after giving the receipt a fair chance
+        if time.time() - t0 >= 3:
+            _, out3, _ = herdr(["pane", "read", pid, "--source", "recent-unwrapped",
+                                "--lines", "200"])
+            marks = [l for l in (out3 or "").splitlines()
+                     if nonce in l and ("[zcodecli:accepted]" in l or "[zcodecli:error]" in l)]
+            if not marks:
+                # viewport fallback: the nonce may sit in a soft-wrapped line.
+                # Tight window + no echoed-JSON/nested-marker inside, else a
+                # PREVIOUS task's marker would match this nonce's echo.
+                _, outv, _ = herdr(["pane", "read", pid, "--source", "visible",
+                                    "--lines", "200"])
+                vis = outv or ""
+                if nonce in vis:
+                    i = vis.find(nonce)
+                    for marker in ("[zcodecli:error]", "[zcodecli:accepted]"):
+                        m = vis.rfind(marker, max(0, i - 220), i)
+                        if m == -1:
+                            continue
+                        window = vis[m:i + len(nonce) + 2]
+                        if '"goal"' in window or marker in window[len(marker):]:
+                            break   # window spans another task's line: not ours
+                        marks.append(window)
+                        break
+            if marks:
+                break
         time.sleep(0.5)
     if receipt:
         if receipt.get("ok"):
