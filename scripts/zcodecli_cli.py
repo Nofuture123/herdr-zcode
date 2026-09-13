@@ -128,8 +128,26 @@ def need_pane(explicit=None):
         print(f"executor pane not found. open it first: zcodecli open", file=sys.stderr); sys.exit(2)
     return pid
 
+def auto_open_executor(timeout_s=12.0):
+    """No executor pane: open the reception pane ourselves (idempotent) and
+    wait for it to register. Agents must not need to know this dance."""
+    herdr(["plugin", "pane", "open", "--plugin", "zcode",
+           "--entrypoint", "executor", "--placement", "tab"])
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        pid = resolve_pane()
+        if pid:
+            print(f"note: executor pane was missing — auto-opened {pid}", file=sys.stderr)
+            return pid
+        time.sleep(0.5)
+    return None
+
 def cmd_send(a):
-    pid = need_pane(getattr(a, 'pane', None))
+    pid = resolve_pane(getattr(a, 'pane', None))
+    if not pid:
+        pid = auto_open_executor()
+    if not pid:
+        print("executor pane not found and auto-open failed. run: zcodecli open", file=sys.stderr); return 2
     ws = a.workspace or os.getcwd()
     if not os.path.isdir(ws): print(f"workspace not a dir: {ws}", file=sys.stderr); return 2
     ws = os.path.realpath(ws)   # one canonical form: locks and sessions key on this
@@ -149,6 +167,11 @@ def cmd_send(a):
     elif not a.raw and not stripped.startswith("/"):
         text = json.dumps({"goal": text, "workspace": ws, "nonce": nonce}, ensure_ascii=False)
     rc, stdout, stderr = herdr(["pane", "run", pid, text])
+    if rc != 0 and "pane_not_found" in (stderr or "") and not getattr(a, "pane", None):
+        pid = auto_open_executor()          # targeted pane was closed; self-heal
+        if not pid:
+            print((stderr or stdout).strip(), file=sys.stderr); return rc
+        rc, stdout, stderr = herdr(["pane", "run", pid, text])
     if rc != 0:
         print((stderr or stdout).strip(), file=sys.stderr); return rc
     if a.raw or stripped.startswith("/"):
@@ -231,7 +254,7 @@ def cmd_wait(a):
 def cmd_result(a):
     """Wait for a task's terminal result — resolved from disk evidence
     (owners/ + results/), independent of pane markers."""
-    pid = need_pane(getattr(a, 'pane', None))
+    pid = resolve_pane(getattr(a, 'pane', None))
     req = getattr(a, "request", None)
     deadline = time.time() + a.timeout / 1000
 
@@ -245,7 +268,7 @@ def cmd_result(a):
                     rec = json.load(open(os.path.join(broker.OWNERS, f)))
                 except Exception:
                     continue
-                if rec.get("pane_id") == pane and rec.get("ts", 0) > best[0]:
+                if (pane is None or rec.get("pane_id") == pane) and rec.get("ts", 0) > best[0]:
                     best = (rec.get("ts", 0), rec.get("task_id"))
         except OSError:
             pass
