@@ -104,7 +104,8 @@ def cmd_chat_open(a):
             if pp.get("tab_id")==tab_id: pane_id=pp["pane_id"]; break
     except Exception: pass
     if not pane_id: print("tab created but pane not found:", tab_id, file=sys.stderr); return 1
-    rc4, o4, e4 = herdr(["pane","run",pane_id,"zcodecli chat"])
+    rc4, o4, e4 = herdr(["pane","run",pane_id,
+                          "stty -echo 2>/dev/null; zcodecli chat; stty echo 2>/dev/null"])
     if rc4 != 0: print((e4 or o4).strip(), file=sys.stderr); return rc4
     print(f"chat pane: {pane_id} (tab {tab_id}, workspace {ws})")
     print(f"send turns: zcodecli --pane {pane_id} send '...'   ·  read: zcodecli --pane {pane_id} result")

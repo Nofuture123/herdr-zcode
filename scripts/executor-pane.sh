@@ -10,4 +10,11 @@ export ZCODE_BIN="${ZCODE_BIN:-/Applications/ZCode.app/Contents/Resources/glm/zc
 export QAB_DEFAULT_WORKSPACE="${QAB_DEFAULT_WORKSPACE:-$HOME/projects/qab-demo}"
 export QAB_DEFAULT_MODE="${QAB_DEFAULT_MODE:-yolo}"
 export QAB_DEFAULT_POLICY="${QAB_DEFAULT_POLICY:-allow}"
-exec "${PY3:-/usr/bin/python3}" "$HERE/executor_repl.py"
+# Machine JSON typed by `pane run` would otherwise echo into the pane; the
+# executor renders its own human-readable line instead. Restore echo on exit
+# so the pane's shell stays usable.
+if [ -t 0 ]; then stty -echo 2>/dev/null || true; fi
+"${PY3:-/usr/bin/python3}" "$HERE/executor_repl.py"
+rc=$?
+[ -t 0 ] && stty echo 2>/dev/null || true
+exit $rc
