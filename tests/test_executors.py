@@ -166,3 +166,52 @@ class TestChat(unittest.TestCase):
         self.assertIn("rejected (fail-closed)", buf.getvalue())
         self.assertIn("n-fc01", buf.getvalue())              # nonce bound even on rejection
         self.assertEqual(k.submits, [])
+
+
+class TestNativeStream(unittest.TestCase):
+    def _run_stream(self, events):
+        tid = "t-" + "a" * 12
+        logdir = os.path.join(tmp, "narlogs", tid)
+        os.makedirs(logdir, exist_ok=True)
+        with open(os.path.join(logdir, "native-raw.jsonl"), "w") as f:
+            for ev in events:
+                f.write(json.dumps({"t": 0, "dir": "in",
+                                    "msg": {"method": "session/event",
+                                            "params": {"payload": ev}}}) + "\n")
+        old = os.environ.get("NAR_LOGS_DIR")
+        os.environ["NAR_LOGS_DIR"] = os.path.join(tmp, "narlogs")
+        lines, stop = [], threading.Event()
+        def out(s):
+            lines.append(s)
+            if len(lines) >= 4:
+                stop.set()
+        try:
+            ec.stream_native_output(tid, out, stop)
+        finally:
+            if old is None:
+                os.environ.pop("NAR_LOGS_DIR", None)
+            else:
+                os.environ["NAR_LOGS_DIR"] = old
+        return lines
+
+    def test_renders_text_tools_and_results(self):
+        lines = self._run_stream([
+            {"kind": "text_delta", "delta": "你好\n世界"},
+            {"kind": "tool_call", "toolName": "Bash",
+             "input": {"command": "ls -la /x"}},
+            {"kind": "result", "toolCallId": "c1",
+             "result": {"success": True, "content": "total 40\nfoo"}},
+        ])
+        self.assertEqual(lines[0], "你好")
+        self.assertEqual(lines[1], "世界")
+        self.assertTrue(lines[2].startswith("▸ Bash: ls -la /x"))
+        self.assertTrue(lines[3].startswith("  ✓ "))
+
+    def test_quiet_env_mutes_streaming(self):
+        os.environ["QAB_EXEC_QUIET"] = "1"
+        try:
+            lines = self._run_stream(
+                [{"kind": "text_delta", "delta": "hi"}])
+        finally:
+            os.environ.pop("QAB_EXEC_QUIET", None)
+        self.assertEqual(lines, [])

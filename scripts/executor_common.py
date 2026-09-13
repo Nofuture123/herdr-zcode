@@ -119,3 +119,73 @@ def persist(d):
         with open(broker.result_path(tid), "w") as f:
             json.dump(d, f, indent=1)
         os.chmod(broker.result_path(tid), 0o600)
+
+# ---------- live native output streaming ----------
+def native_log_path(task_id):
+    base = os.path.expanduser(os.environ.get("NAR_LOGS_DIR", "~/.native-agent-router/logs"))
+    return os.path.join(base, task_id, "native-raw.jsonl")
+
+def stream_native_output(task_id, out, stop):
+    """Tail the NAR native protocol log and render the agent's live activity
+    into the pane: assistant text as lines complete, one compact line per tool
+    call and per tool result. Best-effort — unknown events are ignored, and the
+    marker/receipt protocol is untouched. Set QAB_EXEC_QUIET=1 to mute."""
+    if not task_id or os.environ.get("QAB_EXEC_QUIET", "") == "1" \
+            or not broker.TASK_RE.match(task_id):
+        return
+    path = native_log_path(task_id)
+    pos = 0
+    text = []
+
+    def flush(force=False):
+        buf = "".join(text)
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            if line.strip():
+                out(sanitize(line, 400))
+        text[:] = [] if force else [buf]
+        if force and buf.strip():
+            out(sanitize(buf, 400))
+
+    try:
+        while not stop.is_set():
+            if not os.path.exists(path):
+                stop.wait(0.3)
+                continue
+            with open(path, "r", errors="replace") as f:
+                f.seek(pos)
+                chunk = f.read()
+                pos = f.tell()
+            if not chunk:
+                stop.wait(0.3)
+                continue
+            for line in chunk.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("msg") or {}
+                if msg.get("method") != "session/event":
+                    continue
+                pl = (msg.get("params") or {}).get("payload") or {}
+                kind = pl.get("kind") or pl.get("type")
+                if kind == "text_delta" and pl.get("delta"):
+                    text.append(pl["delta"])
+                    flush()
+                elif kind == "tool_call":
+                    flush(force=True)
+                    name = pl.get("toolName") or "?"
+                    inp = pl.get("input") or {}
+                    head = (inp.get("command") or inp.get("file_path")
+                            or inp.get("path") or inp.get("pattern")
+                            or json.dumps(inp, ensure_ascii=False))
+                    out("▸ " + sanitize(f"{name}: {head}", 200))
+                elif kind == "result" and isinstance(pl.get("result"), dict):
+                    r = pl["result"]
+                    mark = "✓" if r.get("success") else "✗"
+                    content = str(r.get("content") or "").replace("\n", " ⏎ ")
+                    out(f"  {mark} " + sanitize(content, 240))
+    finally:
+        flush(force=True)

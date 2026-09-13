@@ -31,6 +31,11 @@ The installer also symlinks `zcodecli` and `nar` into a PATH dir (Homebrew bin o
 - `zcodecli send|result|read|cancel` — programmatic delegation
 - Or just tell your agent: 「这票给 zcode 执行」
 
+Executor panes stream ZCode's live activity into the pane (assistant text, tool
+calls `▸ …`, tool results `✓/✗`) as it works — set `QAB_EXEC_QUIET=1` on the
+pane to mute. Note the executor locks its workspace per task (serial); parallel
+tickets need distinct workspace paths (worktrees or directory aliases).
+
 ## Uninstall
 Action **"ZCode: cleanup before uninstall"**, then `herdr plugin uninstall zcode`.
 

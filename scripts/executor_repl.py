@@ -16,7 +16,7 @@ Markers are signals carrying identifiers only; evidence is results/<task_id>.jso
 import json, os, queue, subprocess, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
-                             emit, collect, persist, sanitize)
+                             emit, collect, persist, sanitize, stream_native_output)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -76,6 +76,11 @@ class Reception:
         self.busy, self.active_request = tid, rid
         self.current_nonce = spec.get("nonce")
         self.sig_accepted(rid, tid, snap.get("status"), spec.get("nonce"))
+        if getattr(self, "_tail", None):
+            self._tail.set()
+        self._tail = threading.Event()
+        threading.Thread(target=stream_native_output, args=(tid, self.out, self._tail),
+                         daemon=True).start()
         return tid
 
     def poll(self, tid, deadline):
@@ -125,6 +130,8 @@ class Reception:
                  f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)")
         if data.get("summary"):
             self.out("[zcodecli:summary] " + sanitize(data["summary"]))
+        if getattr(self, "_tail", None):
+            self._tail.set()
         remember_session(data.get("native_session_id"))
         self.busy = self.active_request = None
         report("idle")

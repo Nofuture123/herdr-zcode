@@ -10,7 +10,7 @@ Facts reported (status/verify_ok/out_of_scope); acceptance = master's job.
 import json, os, queue, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
-                             emit, collect, persist, sanitize)
+                             emit, collect, persist, sanitize, stream_native_output)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -56,6 +56,11 @@ class Chat:
         self.current_rid = rid
         self.current_nonce = spec.get("nonce")
         self.sig("accepted", rid, tid, snap.get("status"), spec.get("nonce"))
+        if getattr(self, "_tail", None):
+            self._tail.set()   # a pane runs one task at a time; replace the tailer
+        self._tail = threading.Event()
+        threading.Thread(target=stream_native_output, args=(tid, self.out, self._tail),
+                         daemon=True).start()
         return tid
 
     def _release_if_never_ran(self, spec, data):
@@ -86,6 +91,7 @@ class Chat:
             self.out(f"[zcodecli:done] {tid} {data['status']} "
                      f"verify_ok={data['verify_ok']} ({round(time.time() - t0)}s)")
             if data.get("summary"): self.out("[zcodecli:summary] " + sanitize(data["summary"]))
+            if getattr(self, "_tail", None): self._tail.set()
             if self.busy == tid: self.busy = None
             report("idle")
         threading.Thread(target=waiter, daemon=True).start()
@@ -172,6 +178,7 @@ class Chat:
         self.sig("result", rid, tid, self.current_nonce)
         self.out(f"[zcodecli:done] {tid} {data['status']} verify_ok={data['verify_ok']}")
         if data.get("summary"): self.out("[zcodecli:summary] " + sanitize(data["summary"]))
+        if getattr(self, "_tail", None): self._tail.set()
         busy_none(self)
         report("idle")
 
