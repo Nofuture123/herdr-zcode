@@ -13,7 +13,10 @@ NAR_SHA="d65bd49755bf4f6637b3c103650175b1b789e3ae"   # verified runtime; upstrea
 NAR_PIN="native-agent-router @ git+https://github.com/BerineYang/native-agent-router.git@$NAR_SHA"
 
 mkdir -p "$BASE" "$BIN"
-{
+
+# Function so a mid-bootstrap failure can print the captured log (an `exit`
+# inside the redirected block would swallow it into $LOG).
+ensure_bridge() {
   echo "ensure-bridge $(date '+%F %T')"
 
   # Locate ZCode CLI (app bundle on macOS, or $ZCODE_BIN, or PATH)
@@ -63,11 +66,11 @@ ENVEO
     echo "installing: $NAR_PIN (atomic: build aside, verify, then switch)"
     rm -rf "$VENV.new"
     python3 -m venv "$VENV.new" && "$VENV.new/bin/pip" -q install "$NAR_PIN" \
-      || { rm -rf "$VENV.new"; echo "install: FAILED"; exit 1; }
+      || { rm -rf "$VENV.new"; echo "install: FAILED"; return 1; }
     got2="$(grep -o '"commit_id": "[0-9a-f]*"' "$VENV.new"/lib/python*/site-packages/native_agent_router-*.dist-info/direct_url.json 2>/dev/null | cut -d'"' -f4)"
-    [ "$got2" = "$NAR_SHA" ] || { rm -rf "$VENV.new"; echo "install: SHA mismatch ($got2)"; exit 1; }
+    [ "$got2" = "$NAR_SHA" ] || { rm -rf "$VENV.new"; echo "install: SHA mismatch ($got2)"; return 1; }
     if ZCODE_BIN="$ZCODE_BIN" "$VENV.new/bin/nar" doctor 2>&1 | grep -q "^[X]"; then
-      rm -rf "$VENV.new"; echo "install: doctor FAILED on new venv"; exit 1
+      rm -rf "$VENV.new"; echo "install: doctor FAILED on new venv"; return 1
     fi
     [ -d "$VENV" ] && { rm -rf "$VENV.old"; mv "$VENV" "$VENV.old"; }
     mv "$VENV.new" "$VENV"
@@ -94,9 +97,14 @@ WRAP
   if ZCODE_BIN="$ZCODE_BIN" "$BIN/nar" doctor > "$BASE/doctor.out" 2>&1 && ! grep -q "^\[X\]" "$BASE/doctor.out"; then
     echo "doctor: ok"
   else
-    echo "doctor: FAILED"; cat "$BASE/doctor.out" | tail -5; exit 1
+    echo "doctor: FAILED"; tail -5 "$BASE/doctor.out"; return 1
   fi
-} > "$LOG" 2>&1
+}
+
+if ! ensure_bridge > "$LOG" 2>&1; then
+  cat "$LOG" >&2
+  exit 1
+fi
 cat "$LOG"
 
 # zcodecli CLI wrapper: herdr-protocol client (send/read/result/close + nar passthrough)
