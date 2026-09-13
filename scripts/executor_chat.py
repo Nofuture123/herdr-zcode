@@ -10,7 +10,8 @@ Facts reported (status/verify_ok/out_of_scope); acceptance = master's job.
 import json, os, queue, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
-                             emit, collect, persist, sanitize, stream_native_output)
+                             emit, collect, persist, sanitize, stream_native_output,
+                             receipt_ok, receipt_err)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -45,6 +46,7 @@ class Chat:
             if spec.get("idempotency_key"):
                 broker.idempotency_release(spec["idempotency_key"])
             self.busy = None; report("idle", force=True)
+            receipt_err(spec.get("nonce"), f"submit failed: {e}")
             return self.sig("error", sanitize(f"submit failed: {e}", 200))
         tid = snap.get("task_id")
         broker.attach_task(rid, tid)
@@ -56,6 +58,7 @@ class Chat:
         self.current_rid = rid
         self.current_nonce = spec.get("nonce")
         self.sig("accepted", rid, tid, snap.get("status"), spec.get("nonce"))
+        receipt_ok(spec.get("nonce"), request_id=rid, task_id=tid, status=snap.get("status"))
         if getattr(self, "_tail", None):
             self._tail.set()   # a pane runs one task at a time; replace the tailer
         self._tail = threading.Event()
@@ -111,13 +114,16 @@ class Chat:
             except Exception: pass
             err = {"ok": False, "error": sanitize(f"rejected (fail-closed): {e}", 200)}
             if raw_nonce: err["nonce"] = raw_nonce
+            receipt_err(raw_nonce, err["error"], request_id=rid)
             return self.sig("error", json.dumps(err, ensure_ascii=True))
         self.current_nonce = spec.get("nonce")
         if spec.get("idempotency_key"):
             st, rec = broker.idempotency_claim(spec["idempotency_key"], broker.fingerprint(spec))
             if st == "conflict":
+                receipt_err(self.current_nonce, "idempotency_conflict: same key, different spec", request_id=rid)
                 return self.sig("error", json.dumps({"ok": False, "error": "idempotency_conflict", "nonce": self.current_nonce}, ensure_ascii=True))
             if st == "indeterminate":
+                receipt_err(self.current_nonce, "idempotency_indeterminate: previous attempt crashed mid-submit; do not blind-rerun", request_id=rid)
                 return self.sig("error", json.dumps({"ok": False, "error": "idempotency_indeterminate: previous attempt crashed mid-submit; do not blind-rerun", "nonce": self.current_nonce}, ensure_ascii=True))
             if st == "duplicate":
                 return self.sig("accepted", rec["request_id"], rec.get("task_id") or "-", "duplicate", self.current_nonce)
@@ -148,6 +154,7 @@ class Chat:
                             try: incoming = json.loads(l).get("nonce")
                             except Exception: pass
                         bn = f" {incoming}" if incoming else ""
+                        receipt_err(incoming or self.current_nonce, f"busy: {tid} running")
                         self.sig("error", f"busy: {tid} running{bn}")
             except queue.Empty:
                 pass
@@ -254,6 +261,7 @@ def main(kernel=None):
                     try: incoming = json.loads(line).get("nonce")
                     except Exception: pass
                 bn = f" {incoming}" if incoming else (f" {c.current_nonce}" if getattr(c, "current_nonce", None) else "")
+                receipt_err(incoming or c.current_nonce, f"busy: {c.busy} running; /cancel to stop")
                 c.sig("error", f"busy: {c.busy} running; /cancel to stop{bn}")
                 continue
             c.run_turn(line)

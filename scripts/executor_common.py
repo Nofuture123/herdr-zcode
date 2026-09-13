@@ -94,6 +94,22 @@ def sanitize(text, limit=600):
 def emit(out, kind, payload):
     out(f"[zcodecli:{kind}] " + json.dumps(payload, ensure_ascii=True))
 
+def receipt_ok(nonce, **fields):
+    """Durable accepted-ack for the send client (survives pane wrapping)."""
+    if nonce:
+        try:
+            broker.save_receipt(nonce, {"ok": True, **fields})
+        except Exception:
+            pass
+
+def receipt_err(nonce, error, **fields):
+    """Durable rejection-ack for the send client (survives pane wrapping)."""
+    if nonce:
+        try:
+            broker.save_receipt(nonce, {"ok": False, "error": str(error)[:300], **fields})
+        except Exception:
+            pass
+
 # NOTE: acceptance/verdict logic deliberately lives in the MASTER (shared skill),
 # not here. The bridge reports facts only: status / verify_ok / out_of_scope.
 

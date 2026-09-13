@@ -12,8 +12,10 @@ REQUESTS = os.path.join(BASE, "requests")
 LEDGERS = os.path.join(BASE, "ledgers")
 RESULTS = os.path.join(BASE, "results")
 OWNERS = os.path.join(BASE, "owners")
+RECEIPTS = os.path.join(BASE, "receipts")
 TASK_RE = re.compile(r"^t-[0-9a-f]+$")
 REQ_RE = re.compile(r"^r-[0-9a-f]{16}$")
+NONCE_RE = re.compile(r"^[0-9a-zA-Z_-]{1,64}$")
 ALLOWED_KEYS = {"goal", "workspace", "mode", "scope", "verify", "policy",
                 "timeout", "idempotency_key", "session_ref", "forbid", "nonce"}
 MODES = {"plan", "build", "edit", "yolo"}
@@ -27,7 +29,7 @@ def _secure(path, dir=False):
 
 
 def init_dirs():
-    for d in (REQUESTS, LEDGERS, RESULTS, OWNERS):
+    for d in (REQUESTS, LEDGERS, RESULTS, OWNERS, RECEIPTS):
         os.makedirs(d, exist_ok=True)
         os.chmod(d, 0o700)
         for f in os.listdir(d):
@@ -253,5 +255,43 @@ def owner_of(task_id):
         return None
     try:
         return json.load(open(p)).get("pane_id")
+    except Exception:
+        return None
+
+
+# ---------- receipts: fold-proof submit acknowledgements ----------
+# Pane markers can be soft-wrapped and lost to a narrow viewport; a receipt file
+# is the durable ack a `send` client polls. Keyed by nonce (client-generated).
+
+def receipt_path(nonce):
+    if not NONCE_RE.match(nonce or ""):
+        raise ValueError(f"invalid nonce: {nonce!r}")
+    return os.path.join(RECEIPTS, "n-" + hashlib.sha256(nonce.encode()).hexdigest()[:24] + ".json")
+
+
+def save_receipt(nonce, payload):
+    try:
+        p = receipt_path(nonce)
+    except ValueError:
+        return
+    rec = dict(payload)
+    rec["nonce"] = nonce
+    rec["ts"] = time.time()
+    fd, tmp = tempfile.mkstemp(dir=RECEIPTS, prefix="tmp-")
+    with os.fdopen(fd, "w") as f:
+        json.dump(rec, f, ensure_ascii=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, p)
+
+
+def load_receipt(nonce):
+    try:
+        p = receipt_path(nonce)
+    except ValueError:
+        return None
+    if not os.path.exists(p):
+        return None
+    try:
+        return json.load(open(p))
     except Exception:
         return None

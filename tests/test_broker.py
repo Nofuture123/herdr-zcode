@@ -146,3 +146,14 @@ class TestPerms(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestReceipts(unittest.TestCase):
+    def test_roundtrip_and_bad_nonce(self):
+        broker.save_receipt("n-test1", {"ok": True, "task_id": "t-abc123"})
+        r = broker.load_receipt("n-test1")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["task_id"], "t-abc123")
+        self.assertIn("nonce", r)
+        self.assertIsNone(broker.load_receipt("../evil"))
+        self.assertIsNone(broker.load_receipt("never-sent"))

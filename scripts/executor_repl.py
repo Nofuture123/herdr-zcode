@@ -16,7 +16,8 @@ Markers are signals carrying identifiers only; evidence is results/<task_id>.jso
 import json, os, queue, subprocess, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
-                             emit, collect, persist, sanitize, stream_native_output)
+                             emit, collect, persist, sanitize, stream_native_output,
+                             receipt_ok, receipt_err)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -40,12 +41,14 @@ class Reception:
     # -- markers: identifiers only, no business verdicts --
     def sig_accepted(self, rid, tid, state, nonce=None):
         self.out(f"[zcodecli:accepted] {rid} {tid} {state}" + (f" {nonce}" if nonce else ""))
+        receipt_ok(nonce, request_id=rid, task_id=tid, status=state)
 
     def sig_result(self, rid, tid):
         self.out(f"[zcodecli:result] {rid} {tid}")
 
     def sig_error(self, msg, nonce=None):
         nonce = nonce or self.current_nonce
+        receipt_err(nonce, msg)
         emit(self.out, "error", {"ok": False, "error": sanitize(msg, 200),
                                  **({"nonce": nonce} if nonce else {})})
 

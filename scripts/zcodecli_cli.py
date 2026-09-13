@@ -150,18 +150,40 @@ def cmd_send(a):
     if a.raw or stripped.startswith("/"):
         print(f"sent to pane {pid} (workspace: {ws})")
         return 0
-    # Receipt poll: match THIS nonce only (never a stale marker), and read
-    # recent-unwrapped so a narrow pane's folded error JSON stays on one line.
+    # Receipt wait: the executor persists an ack to the receipts dir (fold-proof);
+    # pane markers on both sources are the fallback for older executors.
     deadline = time.time() + 15
-    marks = []
+    receipt = None
     while time.time() < deadline:
+        receipt = broker.load_receipt(nonce)
+        if receipt:
+            break
         _, out3, _ = herdr(["pane", "read", pid, "--source", "recent-unwrapped",
                             "--lines", "200"])
         marks = [l for l in (out3 or "").splitlines()
                  if nonce in l and ("[zcodecli:accepted]" in l or "[zcodecli:error]" in l)]
+        if not marks:
+            # viewport fallback: the nonce may sit in a soft-wrapped line, so
+            # match around it instead of requiring one clean line
+            _, outv, _ = herdr(["pane", "read", pid, "--source", "visible", "--lines", "200"])
+            vis = outv or ""
+            if nonce in vis:
+                i = vis.find(nonce)
+                m = vis.rfind("[zcodecli:error]", max(0, i - 300), i)
+                if m == -1:
+                    m = vis.rfind("[zcodecli:accepted]", max(0, i - 300), i)
+                if m != -1:
+                    marks.append(vis[m:i + len(nonce) + 2])
         if marks:
             break
         time.sleep(0.5)
+    if receipt:
+        if receipt.get("ok"):
+            print("accepted:", " ".join(str(receipt.get(k, "-"))
+                                        for k in ("request_id", "task_id", "status")))
+            return 0
+        print(receipt.get("error", "rejected"), file=sys.stderr)
+        return 5
     if not marks:
         print("no receipt within 15s (task may still be queued; re-check with "
               f"zcodecli --pane {pid} read)", file=sys.stderr)
@@ -196,9 +218,11 @@ def cmd_result(a):
     req = getattr(a, "request", None)
 
     def grab():
-        rc2, out2, _ = herdr(["pane", "read", pid, "--source", "recent-unwrapped",
-                              "--lines", "160"])
-        lines = [l for l in (out2 or "").splitlines() if l.startswith("[zcodecli:result]")]
+        lines = []
+        for src in ("recent-unwrapped", "visible"):
+            _, out2, _ = herdr(["pane", "read", pid, "--source", src, "--lines", "160"])
+            lines += [l for l in (out2 or "").splitlines()
+                      if l.startswith("[zcodecli:result]")]
         if req:
             lines = [l for l in lines if f" {req} " in l]
         return lines[-1] if lines else None
