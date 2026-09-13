@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
                              receipt_ok, receipt_err, attach_summary_full, WARN, marker_line,
-                             display_text)
+                             display_text, _C_DIM)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -143,9 +143,9 @@ class Reception:
         if getattr(self, "_tail_thread", None):
             self._tail_thread.join(timeout=1.0)
         self.sig_result(rid, data["task_id"])
-        stc = GREEN if data["status"] == "succeeded" else RED
-        self.out(marker_line("done", f"{data['task_id']} {stc}{data['status']}{RST} "
-                 f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)"))
+        mark = "✓" if data["ok"] else "✗"
+        self.out(f"{_C_DIM}── {mark} {data['task_id']} {data['status']} · "
+                 f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s) ──{RST}")
         line = marker_line("summary", display_text(data["summary"], 200))
         if line:
             self.out(line)

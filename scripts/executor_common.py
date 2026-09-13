@@ -103,7 +103,8 @@ if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
 
 # Pane markers are for HUMANS; machines read receipts/ + results/. By default
 # only state changes worth a human's eye are shown; QAB_EXEC_MARKERS=1 shows all.
-_HIDDEN_MARKERS = {"ready", "accepted", "summary", "wait_timeout"}
+_HIDDEN_MARKERS = {"ready", "accepted", "summary", "wait_timeout",
+                   "result", "done"}
 
 def marker_line(kind, body=""):
     if kind in _HIDDEN_MARKERS and os.environ.get("QAB_EXEC_MARKERS") != "1":

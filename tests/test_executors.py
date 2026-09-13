@@ -297,11 +297,16 @@ class TestMarkerVisibility(unittest.TestCase):
         k, buf, r = self.make()
         r.start(json.dumps({"goal": "do it", "workspace": WS, "mode": "plan",
                             "idempotency_key": "mv1", "nonce": "n-mv1"}))
-        self.assertNotIn("[zcodecli:accepted]", buf.getvalue())
-        self.assertIn("[zcodecli:result]", buf.getvalue())   # result stays visible
+        self.assertNotIn("[zcodecli:", buf.getvalue())   # pane stays marker-free
+        self.assertIn("── ", buf.getvalue())              # dim completion rule shown
         from executor_common import marker_line
         self.assertIsNone(marker_line("ready"))
-        self.assertIsNotNone(marker_line("done"))
+        self.assertIsNone(marker_line("accepted"))
+        self.assertIsNone(marker_line("result"))
+        self.assertIsNone(marker_line("done"))
+        self.assertIsNotNone(marker_line("error"))
+        self.assertTrue(any(os.path.exists(os.path.join(
+            ec.broker.RESULTS, t + ".json")) for t in k.tasks))  # evidence on disk
 
 
 class TestMarkdownFull(unittest.TestCase):

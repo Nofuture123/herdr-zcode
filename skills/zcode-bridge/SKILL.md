@@ -68,11 +68,11 @@ serial queue for quick one-off delegations.
      released and the same key may be resubmitted immediately.)
 3. `/continue <text>` — follow-up on the same native ZCode session (rework rounds).
 4. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
-   One task runs at a time; the pane prints `[zcodecli:done] <task_id> <status> verify_ok=...`
-   plus `[zcodecli:result] {json}` when done. The full evidence ALWAYS lands in
-   `~/.local/share/qonnwolf-zcode-bridge/results/<task_id>.json` (`summary`,
-   `summary_full`) — masters should read THAT, not the pane. The pane's
-   `[zcodecli:summary]` recap is hidden by default (`QAB_EXEC_SUMMARY=1` re-enables).
+   One task runs at a time. Completion is shown as a dim rule line and — for
+   machines — ALWAYS lands in `~/.local/share/qonnwolf-zcode-bridge/results/<task_id>.json`
+   (`status`, `summary`, `summary_full`, `verify`, `changed_files`). Masters must read
+   that file (or `zcodecli result`), never the pane: ready/accepted/summary/result/done
+   markers are hidden unless `QAB_EXEC_MARKERS=1`; `[zcodecli:error]` stays visible.
 
 ## Parallelism: serial per workspace
 The native-agent-router locks the workspace (abspath hash; released only when the pid dies).

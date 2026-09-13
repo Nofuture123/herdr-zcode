@@ -229,63 +229,87 @@ def cmd_wait(a):
     print((stdout or stderr).strip()); return rc
 
 def cmd_result(a):
+    """Wait for a task's terminal result — resolved from disk evidence
+    (owners/ + results/), independent of pane markers."""
     pid = need_pane(getattr(a, 'pane', None))
     req = getattr(a, "request", None)
+    deadline = time.time() + a.timeout / 1000
 
-    def grab():
-        lines = []
-        for src in ("recent-unwrapped", "visible"):
-            _, out2, _ = herdr(["pane", "read", pid, "--source", src, "--lines", "160"])
-            lines += [l for l in (out2 or "").splitlines()
-                      if l.startswith("[zcodecli:result]")]
+    def latest_task_for_pane(pane):
+        best = (0.0, None)
+        try:
+            for f in os.listdir(broker.OWNERS):
+                if not f.endswith(".json"):
+                    continue
+                try:
+                    rec = json.load(open(os.path.join(broker.OWNERS, f)))
+                except Exception:
+                    continue
+                if rec.get("pane_id") == pane and rec.get("ts", 0) > best[0]:
+                    best = (rec.get("ts", 0), rec.get("task_id"))
+        except OSError:
+            pass
+        return best[1]
+
+    tid = None
+    while True:
         if req:
-            lines = [l for l in lines if f" {req} " in l]
-        return lines[-1] if lines else None
-
-    line = grab()
-    if line is None:
-        # wait-output matches FUTURE output only; existing content was checked above
-        rc, stdout, stderr = herdr(["pane", "wait-output", "--match", "[zcodecli:result]",
-                                    "--timeout", str(a.timeout), pid],
-                                   timeout=a.timeout / 1000 + 15)
-        line = grab()
-    if not line:
-        print("no [zcodecli:result] within timeout", file=sys.stderr)
-        return 1
-    parts = line.split()
-    if len(parts) < 3:
-        print(f"malformed result signal: {line!r}", file=sys.stderr)
-        return 1
-    rid_s, tid = parts[1], parts[2]
-    data = {"request_id": rid_s, "task_id": tid}
-    try:
-        rf = broker.result_path(tid)
-    except ValueError:
-        print(f"invalid task_id in marker: {tid!r}", file=sys.stderr)
-        return 1
-    if os.path.exists(rf):
-        full = json.load(open(rf))
-        if full.get("request_id") != rid_s or full.get("task_id") != tid:
-            print("evidence-file identity mismatch — refusing", file=sys.stderr)
+            if not broker.REQ_RE.match(req or ""):
+                print(f"invalid request id: {req!r}", file=sys.stderr); return 1
+            rp = os.path.join(broker.REQUESTS, req + ".json")
+            if not os.path.exists(rp):
+                print(f"unknown request {req}", file=sys.stderr); return 1
+            try:
+                tid = json.load(open(rp)).get("task_id")
+            except Exception:
+                tid = None
+        else:
+            tid = latest_task_for_pane(pid)
+        terminal = False
+        if tid and broker.TASK_RE.match(tid) and os.path.exists(broker.result_path(tid)):
+            try:
+                st = json.load(open(broker.result_path(tid))).get("status") or ""
+            except Exception:
+                st = ""
+            terminal = st in ("succeeded", "failed", "cancelled", "killed")
+        if terminal:
+            break
+        if time.time() > deadline:
+            print("no terminal result within timeout", file=sys.stderr)
             return 1
-        res = full.get("result") or {}
-        diff = res.get("diff") or {}
-        verifies = res.get("verify") or []
-        summ = (res.get("worker_summary") or "")[:800]
-        # the executor persists the uncapped last assistant message when the
-        # native log was available — prefer it (verdict lines live at the tail)
-        if full.get("summary_full") and len(full["summary_full"]) > len(summ):
-            data["summary_full"] = full["summary_full"]
-            summ = full["summary_full"][:1500]
-        data.update({
-            "status": full.get("status") or data.get("status"),
+        time.sleep(0.5)
+
+    rid_s = "-"
+    try:
+        rid_s = (broker.find_request_by_task(tid) or {}).get("request_id", "-")
+    except Exception:
+        pass
+    if req and rid_s not in ("-", req):
+        print("evidence-file identity mismatch — refusing", file=sys.stderr)
+        return 1
+    rf = broker.result_path(tid)
+    full = json.load(open(rf))
+    res = full.get("result") or {}
+    diff = res.get("diff") or {}
+    verifies = res.get("verify") or []
+    summ = (res.get("worker_summary") or "")[:800]
+    # the executor persists the uncapped last assistant message when the
+    # native log was available — prefer it (verdict lines live at the tail)
+    if full.get("summary_full") and len(full["summary_full"]) > len(summ):
+        summary_full = full["summary_full"]
+        summ = summary_full[:1500]
+    else:
+        summary_full = None
+    data = {"request_id": rid_s, "task_id": tid,
+            "status": full.get("status"),
             "summary": summ,
+            "summary_full": summary_full,
             "changed_files": diff.get("changed_files") or [],
             "out_of_scope": diff.get("out_of_scope") or [],
             "verify": verifies,
             "verify_ok": (all(v.get("ok") for v in verifies) if verifies else None),
             "usage": res.get("usage"),
-        })
+            "error": full.get("error")}
     if a.machine:
         print(json.dumps(data, ensure_ascii=False))
         return 0
@@ -302,8 +326,6 @@ def cmd_result(a):
     sm = sanitize((data.get("summary") or "(no summary)"), 800)
     for ln in wrap_dw(sm, W - 6)[:12]:
         print(row("  " + ln))
-    if data.get("summary_full"):
-        print(row(f"{DIM} full summary: results/<task_id>.json:summary_full ({len(data['summary_full'])} chars){RST}"))
     print("├" + "─" * W + "┤")
     cf = data.get("changed_files") or []
     print(row(f"{BOLD} changed files{RST}  {', '.join(cf) if cf else DIM + '(none)' + RST}"))
