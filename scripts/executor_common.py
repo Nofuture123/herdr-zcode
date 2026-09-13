@@ -253,6 +253,7 @@ def stream_native_output(task_id, out, stop):
     think_buf = [""]
     in_code = [False]
     code_no = [0]
+    table_buf = [None]
     thinking_open = [False]
     cur_mid = [None]
     last_blank = [True]
@@ -287,8 +288,32 @@ def stream_native_output(task_id, out, stop):
             raw(f"{_C_DIM}── {int(now - t0)}s ──{_RST}")
             last_blank[0] = True
 
+    def flush_table():
+        rows, table_buf[0] = table_buf[0], None
+        if not rows:
+            return
+        body = [r for r in rows
+                if not _re.match(r"^\s*\|?[\s:|\-]+\|?\s*$", r)]
+        grid = [[c.strip() for c in r.strip().strip("|").split("|")] for r in body]
+        if not grid:
+            return
+        width = max(len(r) for r in grid)
+        grid = [r + [""] * (width - len(r)) for r in grid]
+        widths = [min(38, max(3, max(len(_re.sub(r"\033\[[0-9;]*m", "", c))
+                                     for c in col))) for col in zip(*grid)]
+        gap()
+        for i, row in enumerate(grid):
+            cells = " " + _C_DIM + " │ ".join(
+                c[:w].ljust(w) for c, w in zip(row, widths)) + _RST
+            emit_line(cells)
+            if i == 0 and len(grid) > 1:
+                emit_line(" " + _C_DIM + "─" + "─┼─".join("─" * w for w in widths) + _RST)
+        gap()
+
     def render_text(line):
         line = sanitize(line, 400)
+        if table_buf[0] is not None and not line.lstrip().startswith("|"):
+            flush_table()
         if line.lstrip().startswith("```"):
             if in_code[0]:
                 in_code[0] = False
@@ -307,8 +332,29 @@ def stream_native_output(task_id, out, stop):
             if line.startswith("@@"):
                 return f"{num} {_C_HEAD}{line}{_RST}"
             return f"{num} {line}"
-        if line.startswith("#"):
-            return f"{_C_HEAD}{_inline_md(line)}{_RST}"
+        stripped = line.lstrip()
+        if stripped.startswith("|"):
+            if table_buf[0] is None:
+                table_buf[0] = []
+            table_buf[0].append(line)
+            return None
+        if stripped.startswith(">"):
+            return f"{_C_DIM}▏{_RST} {_C_MUTED}{_inline_md(stripped.lstrip('> ').rstrip())}{_RST}"
+        if _re.match(r"^(---+|\*\*\*+|___+)$", stripped):
+            return f"{_C_DIM}{'─' * 40}{_RST}"
+        m = _re.match(r"^(#{1,6})\s+(.*)", line)
+        if m:
+            level = len(m.group(1))
+            body = _inline_md(m.group(2))
+            if level <= 2:
+                return f"\033[1;38;2;183;245;176m{body}{_RST}"
+            if level <= 4:
+                return f"{_C_ACC}\033[1m{body}{_RST}"
+            return f"\033[2;3m{_C_MUTED}{body}{_RST}"
+        m = _re.match(r"^(\s*)([-*+]|\d+[.)])\s+(.*)", line)
+        if m:
+            mark = "•" if m.group(2) in ("- ", "* ", "+ ") or not m.group(2)[0].isdigit() else m.group(2)
+            return f"{m.group(1)}{_C_DIM}{mark}{_RST} {_inline_md(m.group(3))}"
         return _inline_md(line)
 
     def flush_text(force=False):
@@ -316,12 +362,16 @@ def stream_native_output(task_id, out, stop):
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             if line.strip():
-                emit_line(render_text(line))
+                rendered = render_text(line)
+                if rendered is not None:
+                    emit_line(rendered)
             else:
                 gap()   # the model's own paragraph breaks become blank lines
         text_buf[0] = "" if force else buf
         if force and buf.strip():
-            emit_line(render_text(buf))
+            rendered = render_text(buf)
+            if rendered is not None:
+                emit_line(rendered)
 
     def flush_think(force=False):
         buf = think_buf[0]
@@ -375,6 +425,8 @@ def stream_native_output(task_id, out, stop):
                         if in_code[0]:
                             in_code[0] = False
                             emit_line(f"{_C_DEEP}╰{'─' * 8}{_RST}")
+                        if table_buf[0] is not None:
+                            flush_table()
                         cur_mid[0] = mid
                     if think_buf[0]:
                         flush_think(force=True)   # keep thinking before its answer
@@ -391,6 +443,8 @@ def stream_native_output(task_id, out, stop):
                     think_buf[0] += pl["delta"]
                     flush_think()
                 elif kind == "tool_call":
+                    if table_buf[0] is not None:
+                        flush_table()
                     flush_text(force=True)
                     flush_think(force=True)
                     thinking_open[0] = False
@@ -414,6 +468,8 @@ def stream_native_output(task_id, out, stop):
                 heartbeat()
     finally:
         flush_text(force=True)
+        if table_buf[0] is not None:
+            flush_table()
         flush_think(force=True)
         if in_code[0]:
             emit_line(f"{_C_DEEP}╰{'─' * 8}{_RST}")

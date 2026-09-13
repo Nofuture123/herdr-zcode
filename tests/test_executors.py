@@ -280,3 +280,32 @@ class TestNativeFinalText(unittest.TestCase):
                 os.environ["NAR_LOGS_DIR"] = old
 
 
+
+
+class TestMarkdownFull(unittest.TestCase):
+    def test_headings_quote_hr_ordered_list_and_link(self):
+        nb = TestNativeStream().            _run_stream([
+                {"kind": "text_delta", "delta":
+                 "# 大标题\n### 小节\n> 引用一句\n---\n1. 第一\n- 要点 [pi](https://x)"},
+            ], stop_after=6)
+        self.assertTrue(nb[0].startswith("\033[1;38;2;183;245;176m大标题"))
+        self.assertTrue(nb[1].startswith("\033[38;2;126;231;135m\033[1m小节"))
+        self.assertTrue(nb[2].startswith("\033[38;2;101;125;98m▏"))
+        import re as _rd
+        self.assertTrue(set(_rd.sub(r"\033\[[0-9;]*m", "", nb[3])) <= {"─"})
+        self.assertIn("1.", _plain(nb[4]))
+        self.assertIn("•", _plain(nb[5]))
+        self.assertIn("https://x", _plain(nb[5]))
+
+    def test_table_renders_aligned(self):
+        nb = TestNativeStream().\
+            _run_stream([
+                {"kind": "text_delta", "delta":
+                 "表:\n| 名称 | 值 |\n|---|---|\n| a | longcell |\n| b | 2 |\n完"},
+            ], stop_after=6)
+        self.assertEqual(nb[0], "表:")
+        self.assertIn("名称", nb[1])
+        self.assertIn("│", nb[1])
+        self.assertIn("┼", nb[2])
+        self.assertIn("longcell", nb[3])
+        self.assertEqual(nb[5], "完")
