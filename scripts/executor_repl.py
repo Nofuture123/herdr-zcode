@@ -326,12 +326,22 @@ class Reception:
             report("idle", force=True)
 
 
+def _plugin_version():
+    try:
+        mf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "herdr-plugin.toml")
+        for line in open(mf):
+            if line.startswith("version"):
+                return line.split("=", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+    return "?"
+
 def main(kernel=None):
     kernel = kernel or build_kernel()
     r = Reception(kernel)
     W = 78
     r.out(f"{CYA}╭{'─'*(W-2)}╮{RST}")
-    r.out(f"{CYA}│{RST} {BOLD}zcode-bridge executor{RST} · reception queue {DIM}v0.5 (pure transport){RST}")
+    r.out(f"{CYA}│{RST} {BOLD}zcode-bridge executor{RST} · reception queue {DIM}(pure transport · plugin {_plugin_version()}){RST}")
     r.out(f"{CYA}│{RST} workspace {DIM}{DEFAULT_WS}{RST}  mode {YEL}{DEFAULT_MODE}{RST} · policy {YEL}{DEFAULT_POLICY}{RST}")
     r.out(f"{CYA}│{RST} {DIM}facts reported; acceptance & rework discipline = master's job{RST}")
     r.out(f"{CYA}╰{'─'*(W-2)}╯{RST}")

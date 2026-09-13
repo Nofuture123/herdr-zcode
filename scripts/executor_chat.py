@@ -213,12 +213,22 @@ def busy_none(chat):
 class _ChatChat(Chat):
     pass
 
+def _plugin_version():
+    try:
+        mf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "herdr-plugin.toml")
+        for line in open(mf):
+            if line.startswith("version"):
+                return line.split("=", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+    return "?"
+
 def main(kernel=None):
     kernel = kernel or build_kernel()
     c = Chat(kernel)
     W = 78
     c.out(f"{CYA}╭{'─'*(W-2)}╮{RST}")
-    c.out(f"{CYA}│{RST} {BOLD}zcode chat{RST} · one ZCode session, this pane {DIM}(GLM-5.3-Flash · transport v0.5){RST}")
+    c.out(f"{CYA}│{RST} {BOLD}zcode chat{RST} · one ZCode session, this pane {DIM}(GLM-5.3-Flash · plugin {_plugin_version()}){RST}")
     c.out(f"{CYA}│{RST} workspace {DIM}{c.ws}{RST}")
     c.out(f"{CYA}│{RST} mode {YEL}{MODE}{RST} · policy {YEL}{POLICY}{RST} · {DIM}/quit to end{RST}")
     c.out(f"{CYA}╰{'─'*(W-2)}╯{RST}")
