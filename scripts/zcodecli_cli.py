@@ -128,18 +128,26 @@ def need_pane(explicit=None):
         print(f"executor pane not found. open it first: zcodecli open", file=sys.stderr); sys.exit(2)
     return pid
 
-def auto_open_executor(timeout_s=12.0):
-    """No executor pane: open the reception pane ourselves (idempotent) and
-    wait for it to register. Agents must not need to know this dance."""
-    herdr(["plugin", "pane", "open", "--plugin", "zcode",
-           "--entrypoint", "executor", "--placement", "tab"])
+def auto_open_executor(timeout_s=3.0):
+    """No executor pane: open the reception pane ourselves (idempotent). The
+    open response carries the pane id, so this is instant; input typed before
+    the executor finishes booting is buffered by the tty line discipline."""
+    _, stdout, _ = herdr(["plugin", "pane", "open", "--plugin", "zcode",
+                          "--entrypoint", "executor", "--placement", "tab"])
+    try:
+        pid = json.loads(stdout)["result"]["plugin_pane"]["pane"]["pane_id"]
+        if pid:
+            print(f"note: executor pane was missing — auto-opened {pid}", file=sys.stderr)
+            return pid
+    except Exception:
+        pass
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         pid = resolve_pane()
         if pid:
             print(f"note: executor pane was missing — auto-opened {pid}", file=sys.stderr)
             return pid
-        time.sleep(0.5)
+        time.sleep(0.25)
     return None
 
 def cmd_send(a):
