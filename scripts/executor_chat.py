@@ -62,9 +62,18 @@ class Chat:
         if getattr(self, "_tail", None):
             self._tail.set()   # a pane runs one task at a time; replace the tailer
         self._tail = threading.Event()
-        threading.Thread(target=stream_native_output, args=(tid, self.out, self._tail),
-                         daemon=True).start()
+        self._tail_thread = threading.Thread(
+            target=stream_native_output, args=(tid, self.out, self._tail), daemon=True)
+        self._tail_thread.start()
         return tid
+
+    def stop_tail(self):
+        """Stop the live tailer and let it flush remaining lines BEFORE the
+        result block prints, so pane order stays chronological."""
+        if getattr(self, "_tail", None):
+            self._tail.set()
+        if getattr(self, "_tail_thread", None):
+            self._tail_thread.join(timeout=1.0)
 
     def _release_if_never_ran(self, spec, data):
         """workspace_busy means the task never executed; free the idempotency key."""
@@ -90,6 +99,7 @@ class Chat:
                      "changed_files": data["changed_files"],
                      "summary": data["summary"], "usage": data["usage"]})
             self._release_if_never_ran(spec, data)
+            self.stop_tail()
             self.sig("result", rid, tid, nonce or self.current_nonce)
             self.out(f"[zcodecli:done] {tid} {data['status']} "
                      f"verify_ok={data['verify_ok']} ({round(time.time() - t0)}s)")
@@ -182,6 +192,7 @@ class Chat:
                  "out_of_scope": data["out_of_scope"],
                  "changed_files": data["changed_files"],
                  "summary": data["summary"], "usage": data["usage"]})
+        self.stop_tail()
         self.sig("result", rid, tid, self.current_nonce)
         self.out(f"[zcodecli:done] {tid} {data['status']} verify_ok={data['verify_ok']}")
         if data.get("summary"): self.out("[zcodecli:summary] " + sanitize(data["summary"]))

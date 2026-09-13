@@ -82,8 +82,9 @@ class Reception:
         if getattr(self, "_tail", None):
             self._tail.set()
         self._tail = threading.Event()
-        threading.Thread(target=stream_native_output, args=(tid, self.out, self._tail),
-                         daemon=True).start()
+        self._tail_thread = threading.Thread(
+            target=stream_native_output, args=(tid, self.out, self._tail), daemon=True)
+        self._tail_thread.start()
         return tid
 
     def poll(self, tid, deadline):
@@ -128,6 +129,10 @@ class Reception:
                  "out_of_scope": data["out_of_scope"],
                  "changed_files": data["changed_files"],
                  "summary": data["summary"], "usage": data["usage"]})
+        if getattr(self, "_tail", None):
+            self._tail.set()
+        if getattr(self, "_tail_thread", None):
+            self._tail_thread.join(timeout=1.0)
         self.sig_result(rid, data["task_id"])
         self.out(f"[zcodecli:done] {data['task_id']} {data['status']} "
                  f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)")
