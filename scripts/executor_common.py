@@ -137,36 +137,59 @@ def persist(d):
         os.chmod(broker.result_path(tid), 0o600)
 
 # ---------- live native output streaming ----------
+_DIM, _RST = "\033[2m", "\033[0m"
+_CYA, _GRN, _RED = "\033[36m", "\033[32m", "\033[31m"
+
 def native_log_path(task_id):
     base = os.path.expanduser(os.environ.get("NAR_LOGS_DIR", "~/.native-agent-router/logs"))
     return os.path.join(base, task_id, "native-raw.jsonl")
 
 def stream_native_output(task_id, out, stop):
     """Tail the NAR native protocol log and render the agent's live activity
-    into the pane: assistant text as lines complete, one compact line per tool
-    call and per tool result. Best-effort — unknown events are ignored, and the
-    marker/receipt protocol is untouched. Set QAB_EXEC_QUIET=1 to mute."""
+    into the pane, pi-CLI style: dim rule with elapsed seconds as a heartbeat,
+    reasoning in dim `·` lines, assistant text plain, cyan `▸` tool lines and
+    short ✓/✗ result lines. Best-effort — unknown events are ignored, and the
+    marker/receipt protocol is untouched. QAB_EXEC_QUIET=1 mutes everything;
+    QAB_EXEC_REASONING=0 mutes reasoning."""
     if not task_id or os.environ.get("QAB_EXEC_QUIET", "") == "1" \
             or not broker.TASK_RE.match(task_id):
         return
+    show_reasoning = os.environ.get("QAB_EXEC_REASONING", "") != "0"
     path = native_log_path(task_id)
     pos = 0
-    text = []
+    bufs = {"text": "", "reasoning": ""}
+    t0 = time.time()
+    last_emit = [t0]
 
-    def flush(force=False):
-        buf = "".join(text)
+    def heartbeat():
+        now = time.time()
+        if now - last_emit[0] >= 20:
+            last_emit[0] = now
+            out(f"{_DIM}── {int(now - t0)}s ──{_RST}")
+
+    def render(kind, line):
+        line = sanitize(line, 400)
+        return f"{_DIM}· {line}{_RST}" if kind == "reasoning" else line
+
+    def emit_line(s):
+        last_emit[0] = time.time()
+        out(s)
+
+    def flush(kind, force=False):
+        buf = bufs[kind]
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             if line.strip():
-                out(sanitize(line, 400))
-        text[:] = [] if force else [buf]
+                emit_line(render(kind, line))
+        bufs[kind] = "" if force else buf
         if force and buf.strip():
-            out(sanitize(buf, 400))
+            emit_line(render(kind, buf))
 
     try:
         while not stop.is_set():
             if not os.path.exists(path):
                 stop.wait(0.3)
+                heartbeat()
                 continue
             with open(path, "r", errors="replace") as f:
                 f.seek(pos)
@@ -174,6 +197,7 @@ def stream_native_output(task_id, out, stop):
                 pos = f.tell()
             if not chunk:
                 stop.wait(0.3)
+                heartbeat()
                 continue
             for line in chunk.splitlines():
                 if not line.strip():
@@ -188,20 +212,30 @@ def stream_native_output(task_id, out, stop):
                 pl = (msg.get("params") or {}).get("payload") or {}
                 kind = pl.get("kind") or pl.get("type")
                 if kind == "text_delta" and pl.get("delta"):
-                    text.append(pl["delta"])
-                    flush()
+                    bufs["text"] += pl["delta"]
+                    flush("text")
+                elif kind == "reasoning_delta" and pl.get("delta") and show_reasoning:
+                    bufs["reasoning"] += pl["delta"]
+                    flush("reasoning")
                 elif kind == "tool_call":
-                    flush(force=True)
+                    flush("text", force=True)
+                    flush("reasoning", force=True)
                     name = pl.get("toolName") or "?"
                     inp = pl.get("input") or {}
                     head = (inp.get("command") or inp.get("file_path")
                             or inp.get("path") or inp.get("pattern")
                             or json.dumps(inp, ensure_ascii=False))
-                    out("▸ " + sanitize(f"{name}: {head}", 200))
+                    emit_line(f"{_CYA}▸ {sanitize(name, 40)}: {sanitize(head, 160)}{_RST}")
                 elif kind == "result" and isinstance(pl.get("result"), dict):
                     r = pl["result"]
-                    mark = "✓" if r.get("success") else "✗"
                     content = str(r.get("content") or "").replace("\n", " ⏎ ")
-                    out(f"  {mark} " + sanitize(content, 240))
+                    if r.get("success"):
+                        emit_line(f"  {_GRN}✓{_RST} {_DIM}{sanitize(content, 120)}{_RST}")
+                    else:
+                        emit_line(f"  {_RED}✗{_RST} {sanitize(content, 240)}")
+                else:
+                    continue
+                heartbeat()
     finally:
-        flush(force=True)
+        flush("text", force=True)
+        flush("reasoning", force=True)

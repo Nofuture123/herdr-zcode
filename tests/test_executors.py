@@ -169,7 +169,7 @@ class TestChat(unittest.TestCase):
 
 
 class TestNativeStream(unittest.TestCase):
-    def _run_stream(self, events):
+    def _run_stream(self, events, stop_after=4):
         tid = "t-" + "a" * 12
         logdir = os.path.join(tmp, "narlogs", tid)
         os.makedirs(logdir, exist_ok=True)
@@ -183,7 +183,7 @@ class TestNativeStream(unittest.TestCase):
         lines, stop = [], threading.Event()
         def out(s):
             lines.append(s)
-            if len(lines) >= 4:
+            if len(lines) >= stop_after:
                 stop.set()
         try:
             ec.stream_native_output(tid, out, stop)
@@ -204,8 +204,8 @@ class TestNativeStream(unittest.TestCase):
         ])
         self.assertEqual(lines[0], "你好")
         self.assertEqual(lines[1], "世界")
-        self.assertTrue(lines[2].startswith("▸ Bash: ls -la /x"))
-        self.assertTrue(lines[3].startswith("  ✓ "))
+        self.assertIn("▸ Bash: ls -la /x", lines[2])
+        self.assertTrue(lines[3].startswith("  ") and "✓" in lines[3])
 
     def test_quiet_env_mutes_streaming(self):
         os.environ["QAB_EXEC_QUIET"] = "1"
@@ -215,3 +215,22 @@ class TestNativeStream(unittest.TestCase):
         finally:
             os.environ.pop("QAB_EXEC_QUIET", None)
         self.assertEqual(lines, [])
+
+    def test_reasoning_renders_dim_and_mutable(self):
+        lines = self._run_stream([
+            {"kind": "reasoning_delta", "delta": "先想清楚\n再动手"},
+            {"kind": "text_delta", "delta": "答案"},
+            {"kind": "tool_call", "toolName": "Bash", "input": {"command": "true"}},
+        ], stop_after=4)
+        self.assertTrue(lines[0].startswith("\033[2m· 先想清楚"))
+        self.assertEqual(lines[1], "答案")
+        self.assertTrue(lines[2].startswith("\033[2m· 再动手"))
+        self.assertIn("▸ Bash: true", lines[3])
+        os.environ["QAB_EXEC_REASONING"] = "0"
+        try:
+            lines = self._run_stream(
+                [{"kind": "reasoning_delta", "delta": "hidden"},
+                 {"kind": "text_delta", "delta": "答案"}], stop_after=1)
+        finally:
+            os.environ.pop("QAB_EXEC_REASONING", None)
+        self.assertEqual([l for l in lines if "hidden" in l], [])
