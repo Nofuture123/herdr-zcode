@@ -91,8 +91,22 @@ def sanitize(text, limit=600):
         return ""
     text = _CTRL.sub(" ", str(text)).replace("\n", " ")
     return text[:limit]
+# protocol marker tints (literal text preserved — pane read strips ANSI,
+# so client parsing by the plain [zcodecli:...] prefix keeps working)
+_SIGC = {"done": "\033[1;38;2;159;245;200m", "accepted": "\033[38;2;159;245;200m",
+         "error": "\033[38;2;255;123;147m", "result": "\033[36m",
+         "ready": "\033[38;2;101;125;98m", "summary": "\033[2m",
+         "wait_timeout": "\033[33m"}
+if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
+    _SIGC = {}
+
+def marker_line(kind, body=""):
+    c = _SIGC.get(kind, "")
+    return f"{c}[zcodecli:{kind}]{_RST} {body}" if c else f"[zcodecli:{kind}] {body}"
+
 def emit(out, kind, payload):
-    out(f"[zcodecli:{kind}] " + json.dumps(payload, ensure_ascii=True))
+    c = _SIGC.get(kind, "")
+    out(f"{c}[zcodecli:{kind}]{_RST} " + json.dumps(payload, ensure_ascii=True))
 
 def receipt_ok(nonce, **fields):
     """Durable accepted-ack for the send client (survives pane wrapping)."""
@@ -159,7 +173,23 @@ _C_DIM = "\033[38;2;101;125;98m"       # dim        #657d62
 _C_DEEP = "\033[38;2;47;158;68m"       # accentDeep #2f9e44 (code-block border)
 _C_HEAD = "\033[38;2;183;245;176m"     # mdHeading  #b7f5b0
 _C_ITAL = "\033[2;3;38;2;157;187;155m"  # dim+italic muted (thinking)
+_C_ACC = "\033[38;2;126;231;135m"      # accent     #7ee787 (inline code)
+_C_OKP = "\033[38;2;159;245;200m"      # ok-ish marker tint
+_C_ERRP = "\033[38;2;255;123;147m"     # error marker tint
 WARN = "\033[38;2;214;198;95m"         # warning    #d6c65f
+_MD_BOLD = _re.compile(r"\*\*(.+?)\*\*")
+_MD_CODE = _re.compile(r"`([^`]+)`")
+
+def _inline_md(line):
+    """Render inline markdown (bold, inline code, list bullets) with theme colors."""
+    if "**" in line:
+        line = _MD_BOLD.sub(lambda m: f"\033[1m{m.group(1)}{_RST}", line)
+    if "`" in line:
+        line = _MD_CODE.sub(lambda m: f"{_C_ACC}{m.group(1)}{_RST}", line)
+    if line.lstrip().startswith(("- ", "* ")):
+        line = line.replace("-", "•", 1) if line.lstrip().startswith("- ") else \
+               line.replace("*", "•", 1)
+    return line
 if os.environ.get("NO_COLOR") or os.environ.get("QAB_EXEC_PLAIN"):
     _C_MUTED = _C_TOOL = _C_OK = _C_ERR = _C_DIM = WARN = ""
 
@@ -221,11 +251,16 @@ def stream_native_output(task_id, out, stop):
     last_blank = [True]
     t0 = time.time()
     last_emit = [t0]
+    need_gap = [False]
 
     def raw(sx):
         out(sx)
 
     def emit_line(sx):
+        if need_gap[0] and not last_blank[0]:
+            raw("")
+            last_blank[0] = True
+        need_gap[0] = False
         last_emit[0] = time.time()
         last_blank[0] = False
         raw(sx)
@@ -250,17 +285,24 @@ def stream_native_output(task_id, out, stop):
         if line.lstrip().startswith("```"):
             if in_code[0]:
                 in_code[0] = False
-                return f"{_C_DEEP}╰{'─' * 8}{_RST}"
+                return f"{_C_DIM}{'─' * 56}{_RST}"
             gap()
             in_code[0] = True
             code_no[0] = 0
-            return f"{_C_DEEP}╭{'─' * 4} code {'─' * 4}{_RST}"
+            return f"{_C_DIM}{'─' * 20} code {'─' * 30}{_RST}"
         if in_code[0]:
             code_no[0] += 1
-            return f"{_C_DEEP}{code_no[0]:>3} │{_RST} {line}"
+            num = f"{_C_DIM}{code_no[0]:>3} │{_RST}"
+            if line.startswith("+") and not line.startswith("+++"):
+                return f"{num} {_C_OK}{line}{_RST}"
+            if line.startswith("-") and not line.startswith("---"):
+                return f"{num} {_C_ERR}{line}{_RST}"
+            if line.startswith("@@"):
+                return f"{num} {_C_HEAD}{line}{_RST}"
+            return f"{num} {line}"
         if line.startswith("#"):
-            return f"{_C_HEAD}{line}{_RST}"
-        return line
+            return f"{_C_HEAD}{_inline_md(line)}{_RST}"
+        return _inline_md(line)
 
     def flush_text(force=False):
         buf = text_buf[0]
@@ -268,6 +310,8 @@ def stream_native_output(task_id, out, stop):
             line, buf = buf.split("\n", 1)
             if line.strip():
                 emit_line(render_text(line))
+            else:
+                gap()   # the model's own paragraph breaks become blank lines
         text_buf[0] = "" if force else buf
         if force and buf.strip():
             emit_line(render_text(buf))
@@ -278,6 +322,8 @@ def stream_native_output(task_id, out, stop):
             line, buf = buf.split("\n", 1)
             if line.strip():
                 emit_line(f"{_C_ITAL}· {sanitize(line, 400)}{_RST}")
+            else:
+                gap()
         think_buf[0] = "" if force else buf
         if force and buf.strip():
             emit_line(f"{_C_ITAL}· {sanitize(buf, 400)}{_RST}")
@@ -355,6 +401,7 @@ def stream_native_output(task_id, out, stop):
                         emit_line(f"  {_C_DIM}└{_RST} {_C_OK}✓{_RST} {_C_DIM}{sanitize(content, 120)}{_RST}")
                     else:
                         emit_line(f"  {_C_DIM}└{_RST} {_C_ERR}✗{_RST} {sanitize(content, 240)}")
+                    need_gap[0] = True
                 else:
                     continue
                 heartbeat()

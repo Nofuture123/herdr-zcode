@@ -17,7 +17,7 @@ import json, os, queue, subprocess, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
-                             receipt_ok, receipt_err, attach_summary_full, WARN)
+                             receipt_ok, receipt_err, attach_summary_full, WARN, marker_line)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -40,11 +40,11 @@ class Reception:
 
     # -- markers: identifiers only, no business verdicts --
     def sig_accepted(self, rid, tid, state, nonce=None):
-        self.out(f"[zcodecli:accepted] {rid} {tid} {state}" + (f" {nonce}" if nonce else ""))
+        self.out(marker_line("accepted", f"{rid} {tid} {state}" + (f" {nonce}" if nonce else "")))
         receipt_ok(nonce, request_id=rid, task_id=tid, status=state)
 
     def sig_result(self, rid, tid):
-        self.out(f"[zcodecli:result] {rid} {tid}")
+        self.out(marker_line("result", f"{rid} {tid}"))
 
     def sig_error(self, msg, nonce=None):
         nonce = nonce or self.current_nonce
@@ -138,10 +138,11 @@ class Reception:
         if getattr(self, "_tail_thread", None):
             self._tail_thread.join(timeout=1.0)
         self.sig_result(rid, data["task_id"])
-        self.out(f"[zcodecli:done] {data['task_id']} {data['status']} "
-                 f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)")
+        stc = GREEN if data["status"] == "succeeded" else RED
+        self.out(marker_line("done", f"{data['task_id']} {stc}{data['status']}{RST} "
+                 f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s)"))
         if data.get("summary"):
-            self.out("[zcodecli:summary] " + sanitize(data["summary"]))
+            self.out(marker_line("summary", sanitize(data["summary"])))
         if getattr(self, "_tail", None):
             self._tail.set()
         remember_session(data.get("native_session_id"))
@@ -346,7 +347,7 @@ def main(kernel=None):
     r.out(f"{CYA}│{RST} {DIM}facts reported; acceptance & rework discipline = master's job{RST}")
     r.out(f"{CYA}╰{'─'*(W-2)}╯{RST}")
     report("idle", force=True)
-    r.out("[zcodecli:ready]")
+    r.out(marker_line("ready"))
     r.q = queue.Queue()
     def reader():
         for raw in sys.stdin: r.q.put(raw)
@@ -356,7 +357,7 @@ def main(kernel=None):
         raw = r.q.get()
         if raw is None: break
         r.process(raw)
-        r.out("[zcodecli:ready]")
+        r.out(marker_line("ready"))
 
 if __name__ == "__main__":
     main()

@@ -63,7 +63,8 @@ class TestReception(unittest.TestCase):
         k, buf, r = self.make()
         r.start(json.dumps({"goal": "do it", "workspace": WS, "mode": "yolo",
                             "verify": "true", "idempotency_key": "t1"}))
-        lines = buf.getvalue().splitlines()
+        import re as _rp
+        lines = [_rp.sub(r"\033\[[0-9;]*m", "", x) for x in buf.getvalue().splitlines()]
         acc = [l for l in lines if l.startswith("[zcodecli:accepted]")][0]
         self.assertIn("t-", acc)
         tid = acc.split()[2]
@@ -141,7 +142,8 @@ class TestChat(unittest.TestCase):
         k, buf, c = self.make()
         c.run_turn(json.dumps({"goal": "hi", "workspace": WS, "mode": "plan",
                                "nonce": "n-abcd1234", "idempotency_key": "ch1"}))
-        lines = buf.getvalue().splitlines()
+        import re as _rp
+        lines = [_rp.sub(r"\033\[[0-9;]*m", "", x) for x in buf.getvalue().splitlines()]
         acc = [l for l in lines if l.startswith("[zcodecli:accepted]")][0]
         self.assertIn("n-abcd1234", acc)                     # nonce echoed on receipt
         self.assertIn("t-", acc)
@@ -249,11 +251,11 @@ class TestNativeStream(unittest.TestCase):
             {"kind": "text_delta", "delta": "看代码:\n```python\nx = 1\n```\n完"},
         ], stop_after=5)
         self.assertEqual(_plain(nb[0]), "看代码:")
-        self.assertTrue(_plain(nb[1]).startswith("╭──"))
-        self.assertIn("code", nb[1])
+        self.assertTrue(_plain(nb[1]).startswith("──"))
+        self.assertIn("code", _plain(nb[1]))
         self.assertIn("1 │ x = 1", _plain(nb[2]))
-        self.assertTrue(_plain(nb[3]).startswith("╰──"))
-        self.assertEqual(nb[4], "完")
+        self.assertTrue(_plain(nb[3]).startswith("──"))
+        self.assertEqual(_plain(nb[4]), "完")
 
 
 class TestNativeFinalText(unittest.TestCase):
@@ -278,37 +280,3 @@ class TestNativeFinalText(unittest.TestCase):
                 os.environ["NAR_LOGS_DIR"] = old
 
 
-class TestCodeBlocks(unittest.TestCase):
-    def test_fenced_code_renders_as_block(self):
-        lines = []
-        stop = threading.Event()
-
-        def out(sx):
-            lines.append(_plain(sx))
-            if len(lines) >= 5:
-                stop.set()
-
-        tid = "t-" + "d" * 12
-        logdir = os.path.join(tmp, "narlogs", tid)
-        os.makedirs(logdir, exist_ok=True)
-        with open(os.path.join(logdir, "native-raw.jsonl"), "w") as f:
-            f.write(json.dumps({"msg": {"method": "session/event", "params": {
-                "payload": {"kind": "text_delta", "assistantMessageId": "m1",
-                            "delta": "看代码:\n```python\nx = 1\n```\n完"}}}}) + "\n")
-        old = os.environ.get("NAR_LOGS_DIR")
-        os.environ["NAR_LOGS_DIR"] = os.path.join(tmp, "narlogs")
-        try:
-            ec.stream_native_output(tid, out, stop)
-        finally:
-            if old is None:
-                os.environ.pop("NAR_LOGS_DIR", None)
-            else:
-                os.environ["NAR_LOGS_DIR"] = old
-        nb = [x for x in lines if x.strip()]
-        self.assertIn("完", nb)
-        self.assertEqual(_plain(nb[0]), "看代码:")
-        self.assertTrue(_plain(nb[1]).startswith("╭──"))
-        self.assertIn("code", nb[1])
-        self.assertIn("1 │ x = 1", _plain(nb[2]))
-        self.assertTrue(_plain(nb[3]).startswith("╰──"))
-        self.assertEqual(nb[4], "完")
