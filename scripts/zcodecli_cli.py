@@ -162,6 +162,7 @@ def cmd_send(a):
     text = a.text
     stripped = text.strip()
     nonce = secrets.token_hex(4)
+    flags = any(getattr(a, k, None) for k in ("verify", "mode", "policy", "scope", "key", "timeout"))
     if stripped.startswith("{"):
         try:
             obj = json.loads(stripped)
@@ -173,7 +174,29 @@ def cmd_send(a):
         except json.JSONDecodeError:
             pass  # malformed JSON is delivered verbatim; the executor will fail it closed
     elif not a.raw and not stripped.startswith("/"):
-        text = json.dumps({"goal": text, "workspace": ws, "nonce": nonce}, ensure_ascii=False)
+        obj = {"goal": text, "workspace": ws, "nonce": nonce}
+        if a.verify: obj["verify"] = a.verify
+        if a.mode: obj["mode"] = a.mode
+        if a.policy: obj["policy"] = a.policy
+        if a.scope: obj["scope"] = [x.strip() for x in a.scope.split(",") if x.strip()]
+        if a.key: obj["idempotency_key"] = a.key
+        if a.timeout: obj["timeout"] = a.timeout
+        text = json.dumps(obj, ensure_ascii=False)
+    elif flags and not a.raw:
+        try:
+            obj = json.loads(stripped)
+            if isinstance(obj, dict):
+                if a.verify: obj["verify"] = a.verify
+                if a.mode: obj["mode"] = a.mode
+                if a.policy: obj["policy"] = a.policy
+                if a.scope: obj["scope"] = [x.strip() for x in a.scope.split(",") if x.strip()]
+                if a.key: obj["idempotency_key"] = a.key
+                if a.timeout: obj["timeout"] = a.timeout
+                nonce = obj.get("nonce") or nonce
+                obj["nonce"] = nonce
+                text = json.dumps(obj, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
     rc, stdout, stderr = herdr(["pane", "run", pid, text])
     if rc != 0 and "pane_not_found" in (stderr or "") and not getattr(a, "pane", None):
         pid = auto_open_executor()          # targeted pane was closed; self-heal
@@ -396,6 +419,25 @@ def cmd_nar_inspect(a):
         print("bridge not installed; run the plugin startup or ensure-bridge.sh", file=sys.stderr); return 2
     os.execv(NAR, [NAR, "inspect"] + a.nar_args)
 
+def cmd_open_session(a):
+    """Open a delegated task's full native conversation (resume by session id)."""
+    tid = a.task_id
+    if not broker.TASK_RE.match(tid or ""):
+        print("usage: zcodecli open-session <task_id>", file=sys.stderr); return 2
+    rf = broker.result_path(tid)
+    if not os.path.exists(rf):
+        print(f"no evidence file for {tid}", file=sys.stderr); return 1
+    sess = json.load(open(rf)).get("native_session_id")
+    if not sess:
+        print(f"task {tid} has no native session id", file=sys.stderr); return 1
+    zbin = os.environ.get("ZCODE_BIN") or "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"
+    cmd = [os.environ.get("NODE_BIN") or "node", zbin, "--resume", sess]
+    if a.print:
+        print(" ".join(cmd)); return 0
+    print(f"opening {sess} …", file=sys.stderr)
+    os.execvp(cmd[0], cmd)
+
+
 def cmd_cancel(a):
     tid = a.nar_args[0] if a.nar_args else None
     if not tid: print("usage: zcodecli cancel <task_id>", file=sys.stderr); return 2
@@ -426,6 +468,12 @@ s = sub.add_parser("chat-open"); s.add_argument("--workspace", default=None); s.
 s = sub.add_parser("send"); s.add_argument("text"); s.add_argument("--workspace", default=None,
                    help="override workspace (default: caller's cwd)")
 s.add_argument("--raw", action="store_true", help="send text verbatim (no JSON envelope)")
+s.add_argument("--verify", default=None, help="verify command (required for edit/yolo)")
+s.add_argument("--mode", default=None, choices=["plan", "build", "edit", "yolo"])
+s.add_argument("--policy", default=None, choices=["allow", "deny"])
+s.add_argument("--scope", default=None, help="comma-separated relative paths")
+s.add_argument("--key", default=None, help="idempotency_key")
+s.add_argument("--timeout", type=int, default=None)
 s.set_defaults(fn=cmd_send)
 s = sub.add_parser("result"); s.add_argument("--request", default=None,
                    help="wait for the result of THIS request_id"); s.add_argument("--machine", action="store_true")
@@ -437,6 +485,7 @@ s = sub.add_parser("wait"); s.add_argument("text"); s.add_argument("--timeout", 
 s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_list)
 s = sub.add_parser("inspect"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_nar_inspect)
 s = sub.add_parser("cancel"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_cancel)
+s = sub.add_parser("open-session"); s.add_argument("task_id"); s.add_argument("--print", action="store_true"); s.set_defaults(fn=cmd_open_session)
 a = p.parse_args()
 if not getattr(a, "cmd", None):
     a.cmd = "chat"; a.workspace = None; a.fn = cmd_chat   # bare `zcodecli` = start a session, like pi/codex

@@ -53,7 +53,12 @@ serial queue for quick one-off delegations.
 1. Plain text — e.g. `你好` or `总结一下这个项目的结构` → FULL-ACCESS task (yolo mode, auto-approved).
    The executor runs with the owner's maximum permission: ZCode can read/write/execute anywhere
    the user can. Scope/verify are still recorded as acceptance evidence but do NOT gate writes.
-2. JSON task — full control:
+2. Flags (PREFERRED for agents — no JSON quoting, no shell-expansion traps):
+   `zcodecli send "do X" --verify "grep -qx 6 sum.txt" --mode edit --scope sum.txt --key k1 --timeout 300`
+   Same spec as JSON, assembled client-side. `--verify` satisfies the edit/yolo
+   fail-closed rule. Avoid `$(...)` inside --verify: it may be expanded by YOUR
+   shell before reaching the executor — use self-contained commands.
+3. JSON task — full control:
    `{"goal":"...","workspace":"/abs/path","mode":"edit","scope":["file.py"],"verify":"cmd","idempotency_key":"k1","timeout":600}`
    WORKSPACE IS AUTOMATIC: `zcodecli send` always carries the CALLER's current working directory
    as the task workspace — run it from your project dir and ZCode works there. Override with
@@ -66,8 +71,8 @@ serial queue for quick one-off delegations.
    - `idempotency_key`: ALWAYS set one; resubmitting the same key never double-executes.
      (Exception: a `workspace_busy` failure means the task never started, so the key is
      released and the same key may be resubmitted immediately.)
-3. `/continue <text>` — follow-up on the same native ZCode session (rework rounds).
-4. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
+4. `/continue <text>` — follow-up on the same native ZCode session (rework rounds).
+5. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
    One task runs at a time. Completion is shown as a dim rule line and — for
    machines — ALWAYS lands in `~/.local/share/qonnwolf-zcode-bridge/results/<task_id>.json`
    (`status`, `summary`, `summary_full`, `verify`, `changed_files`). Masters must read
