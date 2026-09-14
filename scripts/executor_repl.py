@@ -36,6 +36,8 @@ class Reception:
         self.pane_id = pane_id or os.environ.get("HERDR_PANE_ID")
         self.busy = None            # task_id
         self.active_request = None  # request_id
+        self.pending_steer = None
+        self.last_finished_tid = None
         self.current_nonce = None
         self.last = None            # last request record (spec + task_id)
 
@@ -109,6 +111,9 @@ class Reception:
                             self.do_cancel(ctid)   # tri-state honest outcome; keep polling
                         else:
                             self.sig_error(f"busy: {tid} running; cannot cancel {ctid} from here")
+                    elif l.startswith("/steer "):
+                        self.pending_steer = l[len("/steer "):].strip()
+                        self.do_cancel(tid)        # redirect: cancel, resubmit after finish
                     elif l:
                         incoming = None
                         if l.startswith("{"):
@@ -152,8 +157,10 @@ class Reception:
         if getattr(self, "_tail", None):
             self._tail.set()
         remember_session(data.get("native_session_id"))
+        self.last_finished_tid = data["task_id"]
         self.busy = self.active_request = None
         report("idle")
+        self._launch_pending_steer()
         return data
 
     def background_wait(self, tid, spec, rid):
@@ -163,7 +170,22 @@ class Reception:
                 self.sig("wait_cap", rid, tid, snap.get("status"))   # honest: still running, busy held
                 return   # do NOT fabricate a verdict; busy stays, /cancel still works
             self.finish(snap, spec, rid, 0.0)
+            self._launch_pending_steer()
         threading.Thread(target=waiter, daemon=True).start()
+
+    def _launch_pending_steer(self):
+        """After a steered task reaches terminal, relaunch with the new
+        instruction in the same native session."""
+        if getattr(self, "pending_steer", None) and self.last_finished_tid:
+            text, self.pending_steer = self.pending_steer, None
+            spec = dict(getattr(self, "active_spec", {}) or {})
+            spec["goal"] = text
+            spec["session_ref"] = self.last_finished_tid
+            spec.pop("idempotency_key", None)
+            rid = broker.new_request_id()
+            broker.save_request(rid, spec)
+            self.out(f"{YEL}↻ steering → {sanitize(text, 60)}{RST}")
+            self.run_task(spec, rid)
 
     def run_task(self, spec, rid):
         self.active_spec, self.active_request = spec, rid
@@ -286,17 +308,8 @@ class Reception:
         session with the new instruction (model sees all prior context)."""
         if not self.busy:
             self.out("nothing running"); return
-        old_tid = self.busy
-        old_spec = dict(getattr(self, "active_spec", {}) or {})
-        self.do_cancel(old_tid)
-        spec = dict(old_spec)
-        spec["goal"] = text
-        spec["session_ref"] = old_tid          # continue the same conversation
-        spec.pop("idempotency_key", None)      # steering is a new, distinct task
-        rid = broker.new_request_id()
-        broker.save_request(rid, spec)
-        self.out(f"{YEL}↻ steering {old_tid} → new instruction{RST}")
-        self.run_task(spec, rid)
+        self.pending_steer = text
+        self.do_cancel(self.busy)              # run_task relaunches with the steer
 
     def handle(self, line):
         line = line.strip()
@@ -378,7 +391,9 @@ def main(kernel=None):
     r.out(f"{CYA}│{RST} {DIM}facts reported; acceptance & rework discipline = master's job{RST}")
     r.out(f"{CYA}╰{'─'*(W-2)}╯{RST}")
     report("idle", force=True)
-    r.out(marker_line("ready"))
+    _r = marker_line("ready")
+    if _r:
+        r.out(_r)
     r.q = queue.Queue()
     def reader():
         for raw in sys.stdin: r.q.put(raw)
@@ -388,7 +403,9 @@ def main(kernel=None):
         raw = r.q.get()
         if raw is None: break
         r.process(raw)
-        r.out(marker_line("ready"))
+        _r = marker_line("ready")
+        if _r:
+            r.out(_r)
 
 if __name__ == "__main__":
     main()

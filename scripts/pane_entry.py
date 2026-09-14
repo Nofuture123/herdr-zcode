@@ -30,9 +30,17 @@ def main():
     try:
         saved = json.load(open(os.path.join(
             os.path.expanduser("~/.local/share/herdr-zcode"), "env.json")))
-        for k in ("ZCODE_BIN", "NODE_BIN"):
-            if saved.get(k) and not os.environ.get(k):
-                os.environ[k] = saved[k]
+        for env_key, saved_key in (("ZCODE_BIN", "zcode_bin"), ("NODE_BIN", "node")):
+            if saved.get(saved_key) and not os.environ.get(env_key):
+                os.environ[env_key] = saved[saved_key]
+        # NAR resolves node via PATH lookup; herdr spawns panes with a minimal
+        # PATH, so prepend the toolchain dirs (mirrors the old env.sh export).
+        node_dir = os.path.dirname(saved.get("node")) if saved.get("node") else ""
+        prepend = [d for d in (node_dir, "/opt/homebrew/bin", "/usr/local/bin") if d]
+        cur = os.environ.get("PATH", "")
+        missing = [d for d in prepend if cur.split(":") and d not in cur.split(":")]
+        if missing:
+            os.environ["PATH"] = ":".join(missing) + ":" + cur
     except Exception:
         pass
     script = os.path.join(HERE, "executor_repl.py")

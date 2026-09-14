@@ -354,6 +354,10 @@ class TestSteer(unittest.TestCase):
         self.assertEqual(len(k.submits), 1)
         first_tid = next(iter(k.tasks))
         r.process("/steer switch to v2 design")
+        for _ in range(50):
+            if len(k.submits) >= 2:
+                break
+            time.sleep(0.1)
         self.assertEqual(len(k.submits), 2)
         self.assertEqual(k.tasks[first_tid]["status"], "cancelled")
         self.assertIn(first_tid, k.cancelled)

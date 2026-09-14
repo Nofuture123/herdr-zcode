@@ -55,8 +55,32 @@ def walk_find(obj, key_pred, out):
     elif isinstance(obj, list):
         for v in obj: walk_find(v, key_pred, out)
 
+LAST_PANE_FILE = os.path.join(os.path.expanduser(
+    "~/.local/share/herdr-zcode"), "last-executor-pane")
+
+def remember_pane(pid):
+    try:
+        os.makedirs(os.path.dirname(LAST_PANE_FILE), exist_ok=True)
+        with open(LAST_PANE_FILE, "w") as f:
+            f.write(pid)
+    except OSError:
+        pass
+
+def last_pane():
+    try:
+        with open(LAST_PANE_FILE) as f:
+            pid = f.read().strip()
+        return pid or None
+    except OSError:
+        return None
+
 def resolve_pane(explicit=None):
     if explicit: return explicit
+    lp = last_pane()
+    if lp:
+        rc, out, _ = herdr(["pane", "get", "--pane", lp])
+        if rc == 0:
+            return lp          # last-used executor still alive: keep sticky
     rc, stdout, stderr = herdr(["pane", "list", "--json"])
     if rc != 0:
         rc2, out2, err2 = herdr(["pane", "list"])
@@ -124,6 +148,8 @@ def cmd_open(a):
 
 def need_pane(explicit=None):
     pid = resolve_pane(explicit)
+    if pid and not explicit:
+        remember_pane(pid)
     if not pid:
         print(f"executor pane not found. open it first: zcodecli open", file=sys.stderr); sys.exit(2)
     return pid
@@ -138,6 +164,7 @@ def auto_open_executor(timeout_s=3.0):
         pid = json.loads(stdout)["result"]["plugin_pane"]["pane"]["pane_id"]
         if pid:
             print(f"note: executor pane was missing — auto-opened {pid}", file=sys.stderr)
+            remember_pane(pid)
             return pid
     except Exception:
         pass
@@ -146,6 +173,7 @@ def auto_open_executor(timeout_s=3.0):
         pid = resolve_pane()
         if pid:
             print(f"note: executor pane was missing — auto-opened {pid}", file=sys.stderr)
+            remember_pane(pid)
             return pid
         time.sleep(0.25)
     return None
