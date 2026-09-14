@@ -1,69 +1,75 @@
 id = "zcode"
 name = "ZCode"
-version = "0.5.2"
+version = "0.6.0"
 min_herdr_version = "0.8.0"
 description = "ZCode in Herdr: TUI panes + a delegation bridge (any CLI agent -> native ZCode executor)"
-platforms = ["macos", "linux"]
+platforms = ["macos", "linux", "windows"]
 
-# Runs once on `herdr plugin install`: prereq checks + pinned runtime bootstrap.
+# Runs once on `herdr plugin install`: prereq checks (Node>=22, python3, git,
+# ZCode executor, ZCode login) + pinned runtime bootstrap. Cross-platform Python.
 [[build]]
-command = ["sh", "scripts/plugin-build.sh"]
+command = ["python", "scripts/ensure_bridge.py"]
 
-# Idempotent: keeps ~/.local/share/qonnwolf-zcode-bridge healthy across restarts.
+# Idempotent: keeps the bridge runtime healthy across restarts.
 [[startup]]
-command = ["sh", "scripts/ensure-bridge.sh"]
+command = ["python", "scripts/ensure_bridge.py"]
 
 # The user-facing ZCode TUI.
 [[panes]]
 id = "tui"
 title = "ZCode"
 placement = "split"
-command = ["sh", "bin/launch-zcode.sh"]
+command = ["python", "scripts/tui_entry.py"]
 
 # The delegation bridge: serial task queue backed by NAR -> ZCode headless.
 [[panes]]
 id = "executor"
 title = "zcode-bridge"
 placement = "tab"
-command = ["sh", "scripts/executor-pane.sh"]
+command = ["python", "scripts/pane_entry.py"]
 
 [[actions]]
 id = "open-here"
 title = "Open ZCode here"
 contexts = ["pane", "workspace", "tab"]
-command = ["sh", "bin/open-zcode-here.sh"]
+command = ["python", "scripts/open_zcode_here.py"]
 
 [[actions]]
 id = "open-pane"
 title = "ZCode: open bridge executor pane"
-command = ["sh", "scripts/open-pane.sh"]
+command = ["python", "scripts/zcodecli_cli.py", "open"]
 
 [[actions]]
 id = "doctor"
 title = "ZCode: bridge doctor"
-command = ["sh", "scripts/bridge.sh", "doctor"]
+command = ["python", "scripts/nar_cli.py", "doctor"]
 
 [[actions]]
 id = "status"
 title = "ZCode: task list"
-command = ["sh", "scripts/bridge.sh", "list"]
+command = ["python", "scripts/nar_cli.py", "list"]
 
+# Unix-only maintenance utilities (need bash; kept off the Windows surface).
 [[actions]]
 id = "inject-mcp"
 title = "ZCode: inject MCP into Codex/Claude"
+platforms = ["macos", "linux"]
 command = ["sh", "scripts/inject-mcp.sh", "all"]
 
 [[actions]]
 id = "uninject-mcp"
 title = "ZCode: remove injected MCP configs"
+platforms = ["macos", "linux"]
 command = ["sh", "scripts/uninject-mcp.sh", "all"]
 
 [[actions]]
 id = "install-skill"
 title = "ZCode: install agent skill to ~/.agents/skills"
+platforms = ["macos", "linux"]
 command = ["sh", "scripts/install-skill.sh"]
 
 [[actions]]
 id = "uninstall-cleanup"
 title = "ZCode: cleanup before uninstall (MCP/skill/panes)"
+platforms = ["macos", "linux"]
 command = ["sh", "scripts/uninstall.sh"]

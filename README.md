@@ -17,6 +17,12 @@ Build-time prereq checks: Herdr, Node >= 22, python3, git, ZCode executor, and t
 **logged in** (`~/.zcode/v2/credentials.json` must contain OAuth tokens — if not, run
 `zcode login` first; the installer fails with these exact instructions).
 
+**Windows:** supported as of v0.6.0 (same prereq checks; the ZCode executor is
+resolved from `ZCODE_BIN`, PATH, the macOS app bundle, or
+`%LOCALAPPDATA%\Programs\ZCode`). MCP inject/skill actions remain macOS/Linux
+only (bash utilities). File locking degrades gracefully on Windows
+(ledger writes stay atomic).
+
 ## ⚠️ Permissions (read before installing)
 The delegation executor runs ZCode with **full user permissions by default** (yolo + auto-approve,
 owner-authorized): tasks can read/write/execute anything your user can, including outside the

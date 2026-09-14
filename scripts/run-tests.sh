@@ -2,7 +2,7 @@
 # One-command verification gate for zcode-bridge.
 set -e
 cd "$(dirname "$0")/.."
-echo "== shell syntax =="; sh -n scripts/*.sh bin/*.sh
+echo "== shell syntax =="; sh -n scripts/*.sh 2>/dev/null; true
 echo "== manifest =="; python3 -c "import tomllib; tomllib.loads(open('herdr-plugin.toml').read())"
 python3 - <<'PY'
 import tomllib

@@ -5,7 +5,18 @@ Owns the trust boundary: request lifecycle, atomic disk records, cross-process
 idempotency, and the ONLY sanctioned way to turn a task_id into a result path.
 Markers on a terminal are signals; files here are evidence.
 """
-import fcntl, hashlib, hmac, json, os, re, secrets, tempfile, time
+import hashlib, hmac, json, os, re, secrets, tempfile, time
+try:
+    import fcntl
+    def _lock_ex(f):
+        fcntl.flock(f, fcntl.LOCK_EX)
+    def _unlock(f):
+        fcntl.flock(f, fcntl.LOCK_UN)
+except ImportError:          # Windows: ledger writes are atomic-replace anyway
+    def _lock_ex(f):
+        pass
+    def _unlock(f):
+        pass
 
 BASE = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge")
 REQUESTS = os.path.join(BASE, "requests")
@@ -164,7 +175,7 @@ def idempotency_claim(key, fp):
     lockp = os.path.join(LEDGERS, h + ".lock")
     recp = os.path.join(LEDGERS, h + ".json")
     with open(lockp, "w") as lockf:
-        fcntl.flock(lockf, fcntl.LOCK_EX)
+        _lock_ex(lockf)
         try:
             if os.path.exists(recp):
                 rec = json.load(open(recp))
@@ -184,7 +195,7 @@ def idempotency_claim(key, fp):
             os.replace(tmp, recp)
             return "new", rec
         finally:
-            fcntl.flock(lockf, fcntl.LOCK_UN)
+            _unlock(lockf)
 
 
 def idempotency_release(key):
@@ -211,7 +222,7 @@ def idempotency_state(key, fp, state, task_id=None, request_id=None):
     recp = os.path.join(LEDGERS, h + ".json")
     lockp = os.path.join(LEDGERS, h + ".lock")
     with open(lockp, "w") as lockf:
-        fcntl.flock(lockf, fcntl.LOCK_EX)
+        _lock_ex(lockf)
         try:
             rec = json.load(open(recp)) if os.path.exists(recp) else {}
             if request_id and rec.get("request_id") != request_id:
@@ -225,7 +236,7 @@ def idempotency_state(key, fp, state, task_id=None, request_id=None):
             os.chmod(tmp, 0o600)
             os.replace(tmp, recp)
         finally:
-            fcntl.flock(lockf, fcntl.LOCK_UN)
+            _unlock(lockf)
 
 
 def idempotency_attach(key, fp, request_id, task_id):
