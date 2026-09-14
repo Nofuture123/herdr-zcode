@@ -74,10 +74,9 @@ def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 def nar_commit(venv_dir):
-    pat = os.path.join(venv_dir, "lib", "python*", "site-packages",
-                       "native_agent_router-*.dist-info", "direct_url.json")
     import glob
-    hits = glob.glob(pat) or glob.glob(pat.replace("/lib/", "\\lib\\"))
+    hits = glob.glob(os.path.join(venv_dir, "**", "native_agent_router-*.dist-info",
+                                  "direct_url.json"), recursive=True)
     for f in hits:
         try:
             m = re.search(r'"commit_id": "([0-9a-f]*)"', open(f).read())
