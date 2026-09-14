@@ -281,6 +281,23 @@ class Reception:
             report("idle")
         return st
 
+    def do_steer(self, text):
+        """Redirect the running task: cancel it, resubmit in the SAME native
+        session with the new instruction (model sees all prior context)."""
+        if not self.busy:
+            self.out("nothing running"); return
+        old_tid = self.busy
+        old_spec = dict(getattr(self, "active_spec", {}) or {})
+        self.do_cancel(old_tid)
+        spec = dict(old_spec)
+        spec["goal"] = text
+        spec["session_ref"] = old_tid          # continue the same conversation
+        spec.pop("idempotency_key", None)      # steering is a new, distinct task
+        rid = broker.new_request_id()
+        broker.save_request(rid, spec)
+        self.out(f"{YEL}↻ steering {old_tid} → new instruction{RST}")
+        self.run_task(spec, rid)
+
     def handle(self, line):
         line = line.strip()
         if not line: return
@@ -301,6 +318,7 @@ class Reception:
             elif cmd == "/inspect":
                 self.out(sanitize(str(self.kernel.inspect(rest.strip(), "summary")), 1500))
             elif cmd == "/continue": self.do_continue(rest)
+            elif cmd == "/steer": self.do_steer(rest)
             else: self.sig_error(f"unknown command {cmd}")
             return
         if self.busy:
@@ -310,7 +328,8 @@ class Reception:
     def process(self, line):
         """Main-loop body: honors /cancel mid-run, otherwise dispatches."""
         line = line.strip()
-        if self.busy and not (line == "/cancel" or line.startswith("/cancel ")):
+        if self.busy and not (line == "/cancel" or line.startswith("/cancel ")
+                          or line.startswith("/steer ")):
             if line:
                 incoming = None
                 if line.startswith("{"):
@@ -323,6 +342,12 @@ class Reception:
                 self.do_cancel()
             elif line.startswith("/cancel "):
                 self.do_cancel(line.split()[-1])
+            return
+        if line.startswith("/steer "):
+            if self.busy:
+                self.do_steer(line[len("/steer "):].strip())
+            else:
+                self.out("nothing running")
             return
         try:
             self.handle(line)

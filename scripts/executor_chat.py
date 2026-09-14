@@ -120,6 +120,30 @@ class Chat:
             report("idle")
         threading.Thread(target=waiter, daemon=True).start()
 
+    def do_steer(self, text):
+        """Redirect the running turn: cancel it, resubmit in the SAME native
+        session with the new instruction."""
+        if not self.busy:
+            c_line = self.sig("error", "nothing running")
+            return
+        old_tid = self.busy
+        old_spec = dict(getattr(self, "active_spec", {}) or {})
+        self.out(f"{YEL}cancelling {old_tid} for steering …{RST}")
+        try:
+            self.kernel.cancel(old_tid)
+        except Exception as e:
+            self.sig("error", f"steer cancel failed: {sanitize(str(e), 120)}")
+            return
+        spec = dict(old_spec)
+        spec["goal"] = text
+        spec["session_ref"] = old_tid
+        spec.pop("idempotency_key", None)
+        self.busy = None
+        rid = broker.new_request_id()
+        broker.save_request(rid, spec)
+        self.out(f"{YEL}↻ steering {old_tid} → new instruction{RST}")
+        self.run_turn(json.dumps(spec, ensure_ascii=False))
+
     def run_turn(self, line):
         rid = broker.new_request_id()
         try:
@@ -293,6 +317,9 @@ def main(kernel=None):
                     report("idle")
                 continue
             if line == "/help": c.out(__doc__); continue
+            if line.startswith("/steer "):
+                c.do_steer(line[len("/steer "):].strip())
+                continue
             if c.busy:
                 incoming = None
                 if line.startswith("{"):

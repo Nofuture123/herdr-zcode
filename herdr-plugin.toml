@@ -8,11 +8,21 @@ platforms = ["macos", "linux", "windows"]
 # Runs once on `herdr plugin install`: prereq checks (Node>=22, python3, git,
 # ZCode executor, ZCode login) + pinned runtime bootstrap. Cross-platform Python.
 [[build]]
+command = ["python3", "scripts/ensure_bridge.py"]
+platforms = ["macos", "linux"]
+
+[[build]]
 command = ["python", "scripts/ensure_bridge.py"]
+platforms = ["windows"]
 
 # Idempotent: keeps the bridge runtime healthy across restarts.
 [[startup]]
+command = ["python3", "scripts/ensure_bridge.py"]
+platforms = ["macos", "linux"]
+
+[[startup]]
 command = ["python", "scripts/ensure_bridge.py"]
+platforms = ["windows"]
 
 # The user-facing ZCode TUI.
 [[panes]]
@@ -26,7 +36,8 @@ command = ["python", "scripts/tui_entry.py"]
 id = "executor"
 title = "zcode-bridge"
 placement = "tab"
-command = ["python", "scripts/pane_entry.py"]
+command = ["python3", "scripts/pane_entry.py"]
+platforms = ["macos", "linux"]
 
 [[actions]]
 id = "open-here"

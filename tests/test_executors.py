@@ -336,3 +336,35 @@ class TestMarkdownFull(unittest.TestCase):
         self.assertIn("┼", nb[2])
         self.assertIn("longcell", nb[3])
         self.assertEqual(nb[5], "完")
+
+
+class TestSteer(unittest.TestCase):
+    def make(self, sticky=True):
+        k = FakeKernel(sticky=sticky); buf = io.StringIO()
+        r = er.Reception(k, out=lambda s=None: buf.write((s or "") + "\n"))
+        r.q = queue.Queue()
+        return k, buf, r
+
+    def test_steer_cancels_and_resubmits_same_session(self):
+        k, buf, r = self.make(sticky=True)
+        os.environ["QAB_EXEC_MARKERS"] = "1"
+        self.addCleanup(os.environ.pop, "QAB_EXEC_MARKERS", None)
+        r.start(json.dumps({"goal": "build v1", "workspace": WS, "mode": "plan",
+                            "idempotency_key": "st1", "timeout": 10}))
+        self.assertEqual(len(k.submits), 1)
+        first_tid = next(iter(k.tasks))
+        r.process("/steer switch to v2 design")
+        self.assertEqual(len(k.submits), 2)
+        self.assertEqual(k.tasks[first_tid]["status"], "cancelled")
+        self.assertIn(first_tid, k.cancelled)
+        kw = k.submits[1]
+        self.assertEqual(kw["goal"], "switch to v2 design")
+        self.assertEqual(kw.get("session_ref"), first_tid)   # same conversation
+        self.assertIsNone(kw.get("idempotency_key"))                # steering is a new task
+        self.assertIn("steering", buf.getvalue())
+
+    def test_steer_with_no_running_task(self):
+        k, buf, r = self.make()
+        r.process("/steer do something")
+        self.assertIn("nothing running", buf.getvalue())
+        self.assertEqual(k.submits, [])

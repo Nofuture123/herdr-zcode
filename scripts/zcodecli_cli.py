@@ -460,6 +460,21 @@ def cmd_cancel(a):
             print(l.strip()); return 1
     print((out2 or "no cancel outcome within 35s").strip(), file=sys.stderr); return 1
 
+def cmd_steer(a):
+    """Redirect the running task: cancel + resubmit in the SAME native session."""
+    text = a.text.strip()
+    if not text:
+        print("usage: zcodecli steer <new instruction>", file=sys.stderr); return 2
+    pid = resolve_pane(getattr(a, "pane", None))
+    if not pid:
+        print("executor pane not found", file=sys.stderr); return 2
+    rc, stdout, stderr = herdr(["pane", "run", pid, f"/steer {text}"])
+    if rc != 0:
+        print((stderr or stdout).strip(), file=sys.stderr); return rc
+    print(f"steered pane {pid}: {text[:60]}")
+    return 0
+
+
 p = argparse.ArgumentParser(prog="zcodecli")
 p.add_argument("--pane", default=None, help="target a specific executor/chat pane id (default: the zcode-bridge reception pane)")
 sub = p.add_subparsers(dest="cmd")
@@ -486,6 +501,7 @@ s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.set_default
 s = sub.add_parser("inspect"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_nar_inspect)
 s = sub.add_parser("cancel"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_cancel)
 s = sub.add_parser("open-session"); s.add_argument("task_id"); s.add_argument("--print", action="store_true"); s.set_defaults(fn=cmd_open_session)
+s = sub.add_parser("steer"); s.add_argument("text"); s.set_defaults(fn=cmd_steer)
 a = p.parse_args()
 if not getattr(a, "cmd", None):
     a.cmd = "chat"; a.workspace = None; a.fn = cmd_chat   # bare `zcodecli` = start a session, like pi/codex
