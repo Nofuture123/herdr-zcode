@@ -46,6 +46,8 @@ def _next():
 def _send(req, t=0.5):
     if H_ENV != "1" or not H_SOCK or not H_PANE:
         return
+    if not hasattr(socket, "AF_UNIX"):
+        return   # Windows: herdr speaks named pipes here; state report degrades
     for timeout in (t, 1.5):
         try:
             sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
