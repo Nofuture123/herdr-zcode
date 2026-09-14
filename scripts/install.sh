@@ -1,5 +1,5 @@
 #!/bin/sh
-# qonnwolf-agent-bridge installer — prereq checks FIRST, then bridge + plugin.
+# herdr-zcode installer — prereq checks FIRST, then bridge + plugin.
 # Usage:  sh scripts/install.sh        (in a clone of this repo)
 set -u
 fail() { echo "✗ $1" >&2; exit 1; }
@@ -25,7 +25,7 @@ ok "ZCode CLI: $ZCODE"
 
 # 4) Bridge runtime (pinned, doctor-gated)
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-PLUGIN_ROOT="$HERE" sh "$HERE/scripts/ensure-bridge.sh" || fail "bridge runtime install failed"
+PLUGIN_ROOT="$HERE" python3 "$HERE/scripts/ensure_bridge.py" || fail "bridge runtime install failed"
 ok "bridge runtime installed + doctor ok"
 
 # 5) Plugin registration (skip if already linked/installed)

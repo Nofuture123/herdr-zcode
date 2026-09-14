@@ -4,11 +4,12 @@ plugin-build.sh). Runs on `herdr plugin install` and via the doctor action.
 
 Checks (fail loudly, with fix hints): Node >= 22, python3, git, ZCode
 executor, ZCode login. Then: venv + pinned NAR (atomic switch), stable
-wrappers, PATH links, doctor gate. Idempotent; safe to re-run.
+wrappers, PATH launchers (real files, never symlinks), doctor gate.
+Idempotent; safe to re-run.
 """
 import json, os, re, shutil, subprocess, sys, time, venv
 
-BASE = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge")
+BASE = os.path.expanduser("~/.local/share/herdr-zcode")
 VENV = os.path.join(BASE, "venv")
 BIN = os.path.join(BASE, "bin")
 LOG = os.path.join(BASE, "last-ensure.log")
@@ -118,7 +119,24 @@ def ensure_venv(py, node_bin, zcode_bin):
         os.replace(VENV, VENV + ".old")
     os.replace(tmp, VENV)
     shutil.rmtree(VENV + ".old", ignore_errors=True)
+    fix_venv_paths()
     print("install: ok (atomic switch complete)")
+
+def fix_venv_paths():
+    """After the atomic switch (venv.new -> venv) rewrite build-time paths that
+    pip baked into console-script shebangs and activate scripts."""
+    bindir = os.path.join(VENV, "Scripts" if IS_WIN else "bin")
+    for fn in os.listdir(bindir):
+        fp = os.path.join(bindir, fn)
+        try:
+            with open(fp) as f:
+                body = f.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        fixed = body.replace(VENV + ".new", VENV).replace(VENV + ".old", VENV)
+        if fixed != body:
+            with open(fp, "w") as f:
+                f.write(fixed)
 
 def write_wrappers(py, node_bin, zcode_bin):
     os.makedirs(BIN, exist_ok=True)
@@ -132,13 +150,13 @@ def write_wrappers(py, node_bin, zcode_bin):
         if not IS_WIN:
             os.chmod(fp, 0o755)
     if not IS_WIN:
-        write("nar", f'#!/bin/sh\n. "$HOME/.local/share/qonnwolf-zcode-bridge/env.sh"\n'
+        write("nar", f'#!/bin/sh\n. "$HOME/.local/share/herdr-zcode/env.sh"\n'
                      f'export ZCODE_BIN="${{ZCODE_BIN:-{zcode_bin}}}"\n'
                      f'exec "{VENV}/bin/nar" "$@"\n')
-        write("zcodecli", f'#!/bin/sh\n. "$HOME/.local/share/qonnwolf-zcode-bridge/env.sh"\n'
+        write("zcodecli", f'#!/bin/sh\n. "$HOME/.local/share/herdr-zcode/env.sh"\n'
                           f'export ZCODE_BIN="${{ZCODE_BIN:-{zcode_bin}}}"\n'
                           f'exec "{py}" "{scripts_dir}/zcodecli_cli.py" "$@"\n')
-        write("zcodecli-mcp", f'#!/bin/sh\n. "$HOME/.local/share/qonnwolf-zcode-bridge/env.sh"\n'
+        write("zcodecli-mcp", f'#!/bin/sh\n. "$HOME/.local/share/herdr-zcode/env.sh"\n'
                               f'export ZCODE_BIN="${{ZCODE_BIN:-{zcode_bin}}}"\n'
                               f'exec "{py}" "{scripts_dir}/zcodecli_mcp.py" "$@"\n')
     else:
@@ -157,7 +175,9 @@ def write_wrappers(py, node_bin, zcode_bin):
     with open(os.path.join(BASE, "env.json"), "w") as f:
         json.dump({"node": node_bin, "py": py, "zcode_bin": zcode_bin}, f, indent=1)
 
-def path_links():
+def path_launchers():
+    """Install real launcher files into a PATH dir — never symlinks, so the
+    on-disk story is always the real path. Migrates legacy symlink installs."""
     if IS_WIN:
         return  # .cmd wrappers live in BASE/bin; add to PATH manually if wanted
     link_dir = None
@@ -166,19 +186,57 @@ def path_links():
             link_dir = d; break
     if not link_dir:
         return
+    installed = []
     for name in ("zcodecli", "nar"):
         dst = os.path.join(link_dir, name)
         src = os.path.join(BIN, name)
-        if os.path.islink(dst) and os.readlink(dst) == src:
-            continue
+        with open(src) as f:
+            body = f.read()
+        if os.path.islink(dst):
+            os.remove(dst)                      # legacy install: symlink -> real file
         if os.path.exists(dst):
+            with open(dst) as f:
+                if f.read() == body:
+                    installed.append(dst); continue
             print(f"skip: {dst} already exists (not ours)")
             continue
-        try:
-            os.symlink(src, dst)
-            print(f"PATH link: {dst}")
-        except OSError:
-            pass
+        with open(dst, "w", newline="\n") as f:
+            f.write(body)
+        os.chmod(dst, 0o755)
+        installed.append(dst)
+        print(f"PATH launcher: {dst}")
+    if installed:
+        with open(os.path.join(BASE, "path-links"), "w") as f:
+            f.write("\n".join(installed) + "\n")
+
+def fix_windows_python3(py):
+    """Herdr panes spawn with bare `python3`; on Windows the WindowsApps alias
+    may be a silent stub. Point `python3.cmd` at the real interpreter and, if
+    the stub shadows it, remove the stub (it is a user-owned reparse point)."""
+    if not IS_WIN or not py:
+        return
+    real = os.path.realpath(py)
+    wa = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                      "Microsoft", "WindowsApps")
+    stub = os.path.join(wa, "python3.exe")
+    try:
+        if os.path.isfile(stub):
+            r = run([stub, "-c", "print(1)"])
+            if r.returncode == 0 and "1" in (r.stdout or ""):
+                return                       # a real interpreter; leave it
+            os.remove(stub)                  # silent Store alias: remove
+            print("removed silent python3.exe Store alias")
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(wa, "python3.cmd"), "w") as f:
+            f.write("@echo off\r\n" + f'"{real}" %*\r\n')
+        print(f"python3 shim -> {real}")
+    except OSError as e:
+        print(f"WARN: could not install python3 shim ({e}); "
+              f"create python3.cmd pointing at {real} in a PATH dir",
+              file=sys.stderr)
+
 
 def main():
     os.makedirs(BASE, exist_ok=True)
@@ -208,9 +266,10 @@ def main():
         fail("ZCode executor not found — install the ZCode app (or set ZCODE_BIN)")
     check_login()
     os.makedirs(BIN, exist_ok=True)
+    fix_windows_python3(py)
     ensure_venv(py, node, zcode)
     write_wrappers(py, node, zcode)
-    path_links()
+    path_launchers()
     # doctor gate: nar must answer and report no [X] problems
     nar = os.path.join(VENV, "Scripts", "python.exe") if IS_WIN \
         else os.path.join(VENV, "bin", "python")

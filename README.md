@@ -28,7 +28,9 @@ The delegation executor runs ZCode with **full user permissions by default** (yo
 owner-authorized): tasks can read/write/execute anything your user can, including outside the
 workspace. Herdr plugins are not sandboxed. Restrict per-task (`"mode":"plan"/"edit"`,
 `"policy":"deny"`) or globally via `QAB_DEFAULT_MODE`/`QAB_DEFAULT_POLICY` env on the executor pane.
-The installer also symlinks `zcodecli` and `nar` into a PATH dir (Homebrew bin or `~/.local/bin`).
+The installer also installs real launcher scripts for `zcodecli` and `nar`
+into a PATH dir (Homebrew bin or `~/.local/bin`) — plain files referencing the
+runtime by its real path, no symlinks.
 
 ## Use
 - `zcodecli`            — start a ZCode session in the current pane (one pane = one session)

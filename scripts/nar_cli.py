@@ -4,7 +4,7 @@ then exec the pinned NAR CLI (doctor / list / inspect / …)."""
 import os, sys, subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BASE = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge")
+BASE = os.path.expanduser("~/.local/share/herdr-zcode")
 
 def main():
     r = subprocess.run([sys.executable, os.path.join(HERE, "ensure_bridge.py")],

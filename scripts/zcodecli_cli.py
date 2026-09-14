@@ -41,7 +41,7 @@ def wrap_dw(t, width):
 
 LABEL = "zcode-bridge"
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
-NAR = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge/bin/nar")
+NAR = os.path.expanduser("~/.local/share/herdr-zcode/bin/nar")
 
 def herdr(args, timeout=60):
     p = subprocess.run([HERDR] + args, capture_output=True, text=True, timeout=timeout)

@@ -3,7 +3,7 @@
 #   sh scripts/uninstall.sh            # keep task evidence (results/)
 #   sh scripts/uninstall.sh --purge    # also delete results/owners/ledgers/requests
 set -u
-BASE="$HOME/.local/share/qonnwolf-zcode-bridge"
+BASE="$HOME/.local/share/herdr-zcode"
 PURGE="${1:-}"
 # 1) running panes + processes
 for P in $(herdr pane list 2>/dev/null | python3 -c "import sys,json; [print(p['pane_id']) for p in json.load(sys.stdin)['result']['panes'] if (p.get('label') or '').startswith('zcode')]" 2>/dev/null); do
@@ -15,18 +15,21 @@ sh "$(dirname "$0")/uninject-mcp.sh" all 2>/dev/null || true
 # 3) shared skill + links
 rm -rf "$HOME/.agents/skills/zcode-bridge" && echo "removed shared skill"
 rm -f "$HOME/.pi/agent/skills/zcode-bridge" "$HOME/.claude/skills/zcode-bridge" 2>/dev/null
-# 4) PATH symlinks — remove ONLY links that point into our runtime (recorded or by target)
+# 4) PATH launchers — remove ONLY entries that point into our runtime
+#    (real launcher files referencing $BASE, or legacy symlinks into it)
 LINKS_FILE="$BASE/path-links"
 if [ -f "$LINKS_FILE" ]; then
   while read -r l; do
     [ -z "$l" ] && continue
     if [ -L "$l" ] && case "$(readlink "$l")" in "$BASE"/*) true;; *) false;; esac; then
       rm -f "$l" && echo "removed link $l"
+    elif [ -f "$l" ] && grep -q "$BASE" "$l" 2>/dev/null; then
+      rm -f "$l" && echo "removed launcher $l"
     fi
   done < "$LINKS_FILE"
   rm -f "$LINKS_FILE"
 fi
-echo "PATH cleanup done (only our links removed)"
+echo "PATH cleanup done (only our launchers removed)"
 # 5) plugin registration (herdr-managed checkout is removed by `herdr plugin uninstall`)
 echo "next: herdr plugin uninstall zcode   (removes the managed checkout; unlink would leave files)"
 # 6) runtime

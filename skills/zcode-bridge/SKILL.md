@@ -8,7 +8,7 @@ description: "Delegate coding tasks to the native ZCode executor (GLM-5.3-Flash)
 ZCode runs as a persistent executor in a Herdr pane (label `zcode-bridge`). ALL communication
 goes through the Herdr protocol — every CLI (Codex, Claude Code, pi, ...) uses the same commands.
 
-`zcodecli` — the bridge client at `~/.local/share/qonnwolf-zcode-bridge/bin/zcodecli`:
+`zcodecli` — the bridge client at `~/.local/share/herdr-zcode/bin/zcodecli`:
 
 ```bash
 zcodecli open                    # open the executor pane (idempotent; returns pane id)
@@ -74,7 +74,7 @@ serial queue for quick one-off delegations.
 4. `/continue <text>` — follow-up on the same native ZCode session (rework rounds).
 5. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
    One task runs at a time. Completion is shown as a dim rule line and — for
-   machines — ALWAYS lands in `~/.local/share/qonnwolf-zcode-bridge/results/<task_id>.json`
+   machines — ALWAYS lands in `~/.local/share/herdr-zcode/results/<task_id>.json`
    (`status`, `summary`, `summary_full`, `verify`, `changed_files`). Masters must read
    that file (or `zcodecli result`), never the pane: ready/accepted/summary/result/done
    markers are hidden unless `QAB_EXEC_MARKERS=1`; `[zcodecli:error]` stays visible.

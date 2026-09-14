@@ -292,7 +292,7 @@ class Reception:
                 if self.busy: self.do_cancel()
                 else: self.out("nothing running")
             elif cmd == "/list":
-                nar = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge/bin/nar")
+                nar = os.path.expanduser("~/.local/share/herdr-zcode/bin/nar")
                 p = subprocess.run([nar, "list"], capture_output=True, text=True)
                 self.out(p.stdout or p.stderr)
             elif cmd == "/status":

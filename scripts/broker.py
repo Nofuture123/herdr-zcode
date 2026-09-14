@@ -18,7 +18,7 @@ except ImportError:          # Windows: ledger writes are atomic-replace anyway
     def _unlock(f):
         pass
 
-BASE = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge")
+BASE = os.path.expanduser("~/.local/share/herdr-zcode")
 REQUESTS = os.path.join(BASE, "requests")
 LEDGERS = os.path.join(BASE, "ledgers")
 RESULTS = os.path.join(BASE, "results")

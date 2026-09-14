@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Executor pane entry (cross-platform): bootstrap, suppress tty echo of
 machine JSON where possible, run the reception executor."""
-import os, sys, subprocess
+import json, os, sys, subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -13,7 +13,7 @@ def main():
     os.environ.setdefault("QAB_DEFAULT_POLICY", "allow")
     bootstrap = os.path.join(HERE, "ensure_bridge.py")
     if not os.path.exists(os.path.join(
-            os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge"), "env.sh")):
+            os.path.expanduser("~/.local/share/herdr-zcode"), "env.sh")):
         r = subprocess.run([sys.executable, bootstrap])
         if r.returncode != 0:
             sys.exit(r.returncode)
@@ -25,6 +25,16 @@ def main():
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, attrs)
         except Exception:
             pass                                # Windows console: skip
+    # NAR auto-discovers the zcode agent via ZCODE_BIN; herdr spawns panes with
+    # a minimal env, so re-inject what bootstrap recorded.
+    try:
+        saved = json.load(open(os.path.join(
+            os.path.expanduser("~/.local/share/herdr-zcode"), "env.json")))
+        for k in ("ZCODE_BIN", "NODE_BIN"):
+            if saved.get(k) and not os.environ.get(k):
+                os.environ[k] = saved[k]
+    except Exception:
+        pass
     script = os.path.join(HERE, "executor_repl.py")
     if hasattr(os, "execv"):
         return os.execv(sys.executable, [sys.executable, script])
