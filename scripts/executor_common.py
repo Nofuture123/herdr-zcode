@@ -19,12 +19,18 @@ RESULTS = broker.RESULTS
 
 def build_kernel():
     """In-process NAR Kernel: real cancel, honest reconcile, no subprocess CLI."""
-    if not os.path.exists(os.path.join(NAR_VENV, "bin", "python")):
-        print("bridge runtime missing; run scripts/ensure-bridge.sh", file=sys.stderr)
+    if os.name == "nt":
+        vpy = os.path.join(NAR_VENV, "Scripts", "python.exe")
+        site = os.path.join(NAR_VENV, "Lib", "site-packages")
+    else:
+        vpy = os.path.join(NAR_VENV, "bin", "python")
+        site = os.path.join(NAR_VENV, "lib",
+                [d for d in os.listdir(os.path.join(NAR_VENV, "lib")) if d.startswith("python")][0],
+                "site-packages")
+    if not os.path.exists(vpy):
+        print("bridge runtime missing; run scripts/ensure_bridge.py", file=sys.stderr)
         sys.exit(3)
-    sys.path.insert(0, os.path.join(NAR_VENV, "lib",
-                    [d for d in os.listdir(os.path.join(NAR_VENV, "lib")) if d.startswith("python")][0],
-                    "site-packages"))
+    sys.path.insert(0, site)
     from native_agent_router.config import load_config
     from native_agent_router.kernel.kernel import Kernel
     from native_agent_router.kernel.store import TaskStore
