@@ -473,13 +473,31 @@ class TestChatSteer(unittest.TestCase):
         calls = []
         def fake_run(line, require_verify=True, drain_input=True):
             calls.append(line)
-            c.last_result = ({"status": "failed", "error": "workspace_busy: lock"}
-                             if len(calls) == 1 else None)
+            return ({"status": "failed", "error": "workspace_busy: lock"}
+                    if len(calls) == 1 else None)   # None = submitted, in flight
         c.run_turn = fake_run
         c.pending_steer = "v2"
         c.active_spec = {"goal": "v1", "workspace": WS}
         c._launch_pending_steer_turn("t-000001")
         self.assertEqual(len(calls), 2)   # busy once -> one retry; None -> stop
+
+    def test_steer_retry_decides_on_return_values_only(self):
+        # a nested relaunch's failure lands in shared last_result; the outer
+        # retry must ignore it and trust only its own run_turn return value
+        k, buf, c = self.make()
+        calls = []
+        def fake_run(line, require_verify=True, drain_input=True):
+            calls.append(line)
+            if len(calls) == 1:
+                c.last_result = {"status": "failed", "error": "stale descendant busy"}
+                return {"status": "failed", "error": "workspace_busy: lock"}
+            c.last_result = {"status": "failed", "error": "stale descendant busy"}
+            return {"status": "succeeded"}      # our attempt ran fine
+        c.run_turn = fake_run
+        c.pending_steer = "v2"
+        c.active_spec = {"goal": "v1", "workspace": WS}
+        c._launch_pending_steer_turn("t-000001")
+        self.assertEqual(len(calls), 2)   # no third submit despite stale busy
 
     def test_relaunch_passes_drain_input_through(self):
         k, buf, c = self.make()

@@ -13,6 +13,8 @@ tmp = tempfile.mkdtemp()
 broker.REQUESTS = os.path.join(tmp, "requests")
 broker.LEDGERS = os.path.join(tmp, "ledgers")
 broker.RESULTS = os.path.join(tmp, "results")
+broker.OWNERS = os.path.join(tmp, "owners")       # owners/receipts are real
+broker.RECEIPTS = os.path.join(tmp, "receipts")   # cross-env state: never leak
 broker.init_dirs()
 
 WS = tempfile.mkdtemp()

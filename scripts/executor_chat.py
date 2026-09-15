@@ -164,14 +164,14 @@ class Chat:
             # inherit the running turn's privilege: it was already accepted, so
             # don't re-demand verify (chat plain-text defaults run yolo without it)
             for attempt in range(12):
-                self.run_turn(json.dumps(spec, ensure_ascii=False),
-                              require_verify=False, drain_input=drain_input)
-                res = self.last_result
-                if res is None:
-                    return   # submitted and in flight (or taken over): no retry
-                if not (res.get("status") == "failed"
+                # decide ONLY on our call's return value: shared last_result
+                # would let a nested relaunch's failure resubmit this (already
+                # cancelled) instruction
+                res = self.run_turn(json.dumps(spec, ensure_ascii=False),
+                                    require_verify=False, drain_input=drain_input)
+                if not (res and res.get("status") == "failed"
                         and "workspace_busy" in str(res.get("error") or "")):
-                    return
+                    return   # in flight, succeeded, or an unrelated failure
                 # NAR publishes terminal status before releasing the workspace
                 # lock; a relaunch in that gap fails without ever running
                 self.out(f"{YEL}workspace lock still held; steer relaunch retry "
@@ -217,7 +217,9 @@ class Chat:
         report("working", sanitize(spec["goal"], 80))
         tid = self.submit(spec, rid)
         if not tid:
-            return          # submit failed; error reported, last_result recorded
+            # submit failed; error reported — hand the verdict to the caller
+            # (steer retry) directly, never via shared state across recursion
+            return self.last_result
         cancelled_by_us = False
         deadline = time.time() + spec["timeout"]
         while time.time() < deadline:
@@ -257,7 +259,7 @@ class Chat:
             else:
                 self.out(f"[zcodecli:wait_timeout] {rid} {tid} (task continues; busy held)")
             self.background_wait(tid, rid)
-            return
+            return None     # in flight; no verdict of our own
         if cancelled_by_us and snap.get("status") == "cancelled":
             self.out("cancelled (confirmed stopped)")
         elif cancelled_by_us:
@@ -288,6 +290,7 @@ class Chat:
         self._launch_pending_steer_turn(tid, drain_input=drain_input)
         if self.busy == tid: self.busy = None
         if not self.busy: report("idle")
+        return data         # OUR verdict only — nested relaunches return theirs
 
 def busy_none(chat):
     chat.busy = None
