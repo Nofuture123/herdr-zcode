@@ -145,11 +145,23 @@ def fix_venv_paths():
             with open(fp, "w") as f:
                 f.write(fixed)
 
+SCRIPTS = os.path.join(BASE, "scripts")
+
+def sync_scripts():
+    """Copy the bridge scripts into the runtime dir. herdr runs build from a
+    TEMP checkout (.tmp-install-*) and startup from the installed plugin dir —
+    launchers must never point at either; BASE/scripts is the stable runtime
+    location, refreshed on every build/startup run."""
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(SCRIPTS, exist_ok=True)
+    for name in os.listdir(src_dir):
+        if name.endswith(".py"):
+            shutil.copyfile(os.path.join(src_dir, name), os.path.join(SCRIPTS, name))
+
 def write_wrappers(py, node_bin, zcode_bin):
     os.makedirs(BIN, exist_ok=True)
     nar_real = os.path.join(VENV, "Scripts", "python.exe") if IS_WIN \
         else os.path.join(VENV, "bin", "python")
-    scripts_dir = os.path.dirname(os.path.abspath(__file__))
     def write(name, body):
         fp = os.path.join(BIN, name)
         with open(fp, "w", newline="\n") as f:
@@ -162,14 +174,14 @@ def write_wrappers(py, node_bin, zcode_bin):
                      f'exec "{VENV}/bin/nar" "$@"\n')
         write("zcodecli", f'#!/bin/sh\n. "$HOME/.local/share/herdr-zcode/env.sh"\n'
                           f'export ZCODE_BIN="${{ZCODE_BIN:-{zcode_bin}}}"\n'
-                          f'exec "{py}" "{scripts_dir}/zcodecli_cli.py" "$@"\n')
+                          f'exec "{py}" "{SCRIPTS}/zcodecli_cli.py" "$@"\n')
         write("zcodecli-mcp", f'#!/bin/sh\n. "$HOME/.local/share/herdr-zcode/env.sh"\n'
                               f'export ZCODE_BIN="${{ZCODE_BIN:-{zcode_bin}}}"\n'
-                              f'exec "{py}" "{scripts_dir}/zcodecli_mcp.py" "$@"\n')
+                              f'exec "{py}" "{SCRIPTS}/zcodecli_mcp.py" "$@"\n')
     else:
         def cmd(exe):
             return (f'@echo off\r\nset "ZCODE_BIN={zcode_bin}"\r\n'
-                    f'"{py}" "{scripts_dir}\\{exe}" %*\r\n')
+                    f'"{py}" "{SCRIPTS}\\{exe}" %*\r\n')
         write("zcodecli.cmd", cmd("zcodecli_cli.py"))
         write("zcodecli-mcp.cmd", cmd("zcodecli_mcp.py"))
         write("nar.cmd", f'@echo off\r\nset "ZCODE_BIN={zcode_bin}"\r\n'
@@ -301,6 +313,7 @@ def main():
     os.makedirs(BIN, exist_ok=True)
     fix_windows_python3(py)
     ensure_venv(py, node, zcode)
+    sync_scripts()
     write_wrappers(py, node, zcode)
     path_launchers()
     # doctor gate: nar must answer and report no [X] problems
