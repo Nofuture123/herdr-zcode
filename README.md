@@ -16,16 +16,30 @@
 ---
 </div>
 
-## 💡 Why herdr-zcode?
+## 🎯 Core Problem Solved: The Inability to Use ZCode Inside Herdr
+
+[Herdr](https://herdr.dev) is the purpose-built terminal multiplexer for coding agents, allowing developers to tile, split, monitor, and coordinate multiple agents (such as Codex, Claude Code, and Pi) simultaneously.
+
+However, **ZCode historically existed as an isolated desktop application or standalone command, completely unusable within the Herdr ecosystem**:
+1. **No TUI in Herdr Panes**: Developers could not launch a native ZCode interactive session inside Herdr's split panes, tabs, or workspaces.
+2. **Zero Cross-Agent Coordination**: Orchestrator agents running in Herdr (like Claude Code or Codex) had no communication channel to delegate tasks to ZCode, leaving ZCode's generous 50% quota grant completely unreachable for automated multi-agent pipelines.
+
+**`herdr-zcode` eliminates this barrier:**
+1. **Native TUI Integration**: Open interactive ZCode TUI sessions directly inside any Herdr pane, tab, or via the `Open ZCode here` action.
+2. **Cross-Agent Execution Layer**: Enables any orchestrator agent in Herdr to dispatch structured coding tickets to ZCode over a unified IPC protocol.
+
+---
+
+## 💡 Why Decouple? Brain vs. Muscle
+
 Frontier reasoning models and orchestrators (such as Codex / GPT-5 series, Claude Sonnet/Opus, and DeepSeek series) excel at system-level architecture, deep context comprehension, and complex problem decomposition. However, using these expensive frontier models directly for **repetitive, low-level execution**—editing boilerplate code, running linters, iterating across failed unit tests, and parsing 500-line stack traces—introduces critical bottlenecks:
 1. **Token Cost Explosion**: Iterative trial-and-error runs burn through premium frontier model quotas at alarming rates.
 2. **Rate Limits & Budget Exhaustion**: Frequent tool calls quickly hit hourly or weekly token allowances in CLI tools like Claude Code.
 3. **Context Window Pollution**: Hundreds of lines of transient compiler warnings, test logs, and intermediate diffs clutter the orchestrator's context window, degrading subsequent reasoning and architectural choices.
 
 **`herdr-zcode` cleanly separates the "Brain" from the "Muscle":**
-
 - **The Orchestrator (Brain)**: Claude Code / Codex / Pi acts as the **Tech Lead**, driving architectural design, user requirements, test specification (TDD), and tracer-bullet ticket decomposition.
-- **The Execution Layer (Muscle)**: `herdr-zcode` delegates concrete coding tickets to a local, native **ZCode** instance (powered by GLM-5.3-Flash). It runs inside isolated git workspaces, autonomously writes code, executes tests, self-heals, and returns deterministic, structured facts.
+- **The Execution Layer (Muscle)**: `herdr-zcode` delegates concrete coding tickets to a local, authenticated **ZCode** native engine (powered by GLM-5.3-Flash). It runs inside isolated git workspaces, autonomously writes code, executes tests, self-heals, and returns deterministic, structured facts.
 
 ```mermaid
 flowchart TD
@@ -125,17 +139,39 @@ Why use ZCode as the execution engine?
 
 ---
 
-## 📦 Installation & Quick Start
+## 📦 Prerequisites & Quick Start
 
-### 1. Prerequisites
-Ensure ZCode is installed and authenticated:
-```bash
-# Verify ZCode authentication (must have valid OAuth credentials)
-zcode login
-```
-Requirements: Python 3.10+, Node.js >= 22, Git, and [Herdr](https://herdr.dev).
+### ⚠️ Mandatory Prerequisites (MUST be installed first!)
 
-### 2. Install Herdr Plugin
+Before installing this plugin, **both ZCode and Herdr MUST already be installed on your system**. The installer's verification gates will fail-closed and abort if either dependency is missing:
+
+1. **ZCode MUST be installed and authenticated**:
+   - Supports the official macOS desktop app (`/Applications/ZCode.app`), Windows client (`%LOCALAPPDATA%\Programs\ZCode`), or `zcode` executable on PATH.
+   - **Must be logged in**: Run in your terminal:
+     ```bash
+     zcode login
+     ```
+     Complete browser authorization to generate `~/.zcode/v2/credentials.json`. The installer aborts if OAuth credentials are not found.
+2. **Herdr Terminal Multiplexer MUST be installed**:
+   - This project is a dedicated plugin for [Herdr](https://herdr.dev). All multi-pane layout management, real-time activity streaming, and inter-agent pipe communications depend on the Herdr runtime.
+3. **Base Toolchain**: Python 3.10+, Node.js >= 22, Git.
+
+---
+
+### 🛠️ What is `zcodecli`? (What does it depend on?)
+
+**`zcodecli` is NOT a standalone AI CLI or a reimplementation of an LLM client.**
+
+It is a lightweight **bridge controller (transport client)** built upon:
+1. **The Local Official ZCode Runtime**: Directly connects to your locally installed, authenticated ZCode engine (`zcode.cjs` / binary) and its OAuth credentials. All code generation, terminal tool invocations, and 50% bonus quota consumptions are **100% executed by the genuine ZCode engine**.
+2. **Herdr Pane IPC Protocol**: Uses Herdr's pane control stream (`herdr pane run`, `wait-output`) to host a persistent headless executor inside a dedicated Herdr pane, sending commands into the pane pipe and reading back structured exit evidence.
+3. **Native Agent Router (NAR)**: Employs a battle-tested routing engine with absolute-path workspace locking, idempotency de-duplication, and orphan-process prevention.
+
+In short: **ZCode is the worker, Herdr is the workshop workstation, and `zcodecli` is the conveyor belt connecting the orchestrator to that workstation.**
+
+---
+
+### 🚀 Install Plugin
 Install via the Herdr plugin manager:
 ```bash
 herdr plugin install Nofuture123/herdr-zcode

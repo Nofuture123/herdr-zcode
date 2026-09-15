@@ -16,16 +16,30 @@
 ---
 </div>
 
-## 💡 为什么需要 herdr-zcode？
+## 🎯 核心解决的痛点：无法在 Herdr 中使用 ZCode
+
+Herdr 是专为 AI Coding Agent 打造的终端多路复用器，开发者可以在其中同时平铺、分屏运行并监控各类 Agent（如 Codex、Claude Code、Pi）。
+
+然而在此之前，**ZCode 作为独立的桌面应用或独立命令，根本无法在 Herdr 体系内使用**：
+1. **无法在 Herdr 窗格内交互**：开发者无法在 Herdr 的分屏、Tab、工作区中直接开出一个原生的 ZCode TUI 窗格进行可视化编程。
+2. **无法与其他 Agent 协同**：Herdr 里的主控 Agent（如 Codex、Claude Code、Pi）与外部的 ZCode 完全孤立，无法通过标准管道向 ZCode 分发任务，更无法利用 ZCode 丰厚的官方 50% 额度赠送来承接高消耗的执行泥潭。
+
+**`herdr-zcode` 彻底打通了这堵墙：**
+1. **TUI 交互直达**：在 Herdr 任意窗格、Tab 或右键菜单一键「Open ZCode here」，原生嵌入 ZCode 交互终端。
+2. **多 Agent 调度执行层**：让 Herdr 里的任意主控 Agent 拥有直接驱动 ZCode 的能力，将 ZCode 作为低成本、高吞吐的「外包施工队」。
+
+---
+
+## 💡 为什么需要解耦？大脑与双手的协作
+
 在现代 AI 辅助研发流程中，前沿推理与主控模型（如 Codex / GPT-5 系列、Claude Sonnet/Opus、DeepSeek 系列）具备极高水准的系统架构设计、复杂上下文理解和需求拆解能力。然而，如果直接让昂贵的主控模型去**执行**具体的代码改写、修复语法错误、反复跑单元测试、抓取数十次报错堆栈，会面临三大致命痛点：
 1. **Token 账单爆炸**：反复试错跑测会迅速消耗海量 Frontier Tokens，单次微小修复成本高昂。
-2. **频率与额度限制（Rate Limits）**：高频工具调用容易迅速耗尽 Claude Code 周期配额。
+2. **频率与额度限制（Rate Limits）**：高频工具调用容易迅速耗尽主控周期配额。
 3. **上下文空间污染（Context Pollution）**：数百行的编译报错、构建日志和中间试错过程堆满主控上下文，显著拉低后续推理与架构决策质量。
 
 **`herdr-zcode` 彻底解耦“大脑（规划与决策）”与“双手（代码执行与自愈）”：**
-
 - **主控层（Orchestrator）**：由 Claude Code / Codex / Pi 担任“技术主管（Tech Lead）”，负责业务理解、系统架构、测试用例编写与工单拆解。
-- **执行层（Execution Layer）**：由 `herdr-zcode` 驱动本地原生 ZCode（基于 GLM-5.3-Flash 高吞吐模型），在沙盒/独立工作区内专注读写文件、运行测试、自愈修复，并返回结构化事实。
+- **执行层（Execution Layer）**：由 `herdr-zcode` 驱动本地已认证的 ZCode 原生引擎（搭载 GLM-5.3-Flash），在独立工作区内专注读写文件、跑测自愈，并返回客观结构化事实。
 
 ```mermaid
 flowchart TD
@@ -125,18 +139,40 @@ flowchart TD
 
 ---
 
-## 📦 安装与快速开始
+## 📦 前置条件与快速安装
 
-### 1. 前置准备
-确保已安装并登录 ZCode：
-```bash
-# 检查 ZCode 是否已认证（必须包含 OAuth 凭证）
-zcode login
-```
-系统环境要求：Python 3.10+、Node.js >= 22、Git、以及 [Herdr](https://herdr.dev)。
+### ⚠️ 硬性前置条件（必须先完成！）
 
-### 2. 一键安装插件
-在 Herdr 插件管理器中安装：
+在安装本插件之前，**你的机器上必须已经安装好 ZCode 和 Herdr**。若缺少任意一项，安装脚本的体检门禁会直接终止并给出修复指引：
+
+1. **必须已安装并登录官方 ZCode**：
+   - 支持 macOS 桌面端（`/Applications/ZCode.app`）、Windows 客户端（`%LOCALAPPDATA%\Programs\ZCode`）或已加入 PATH 的 `zcode` 命令行。
+   - **必须已登录认证**：在终端执行：
+     ```bash
+     zcode login
+     ```
+     在浏览器中完成授权，确保本地生成 `~/.zcode/v2/credentials.json`。未登录凭据时插件无法获取执行配额。
+2. **必须已安装 Herdr 终端多路复用器**：
+   - 本项目是专属于 [Herdr](https://herdr.dev) 的扩展插件。多窗格分屏渲染、状态流式捕获、跨 Agent 管道调度完全依赖 Herdr 运行时。
+3. **系统基础环境**：Python 3.10+、Node.js >= 22、Git。
+
+---
+
+### 🛠️ 什么是 `zcodecli`？（它依托于什么存在？）
+
+**`zcodecli` 绝不是一个重新实现大模型交互的独立第三方 CLI。**
+
+它是一个依托于以下底层设施存在的**轻量级桥接控制器（Bridge Client）**：
+1. **依托本地官方 ZCode 运行时**：直接绑定本地已经安装且登录的官方 ZCode 内核（`zcode.cjs` / 二进制）与 OAuth 凭证；所有代码生成、终端命令执行和 50% 赠送额度消耗，**100% 由官方 ZCode 进程真实完成**。
+2. **依托 Herdr 终端多路复用管道**：通过 Herdr 的窗格通信协议（`herdr pane run`、`wait-output`），在指定的 Herdr 窗格中托管常驻无头执行器，把外部请求打入窗格管道，并提取结构化退出凭证。
+3. **依托 Native Agent Router (NAR)**：基于经过严谨审计与锁机制保护的路由引擎，实现工作区串行锁、幂等请求去重与防孤儿进程控制。
+
+简单来说：**ZCode 是干活的工人，Herdr 是车间工位，而 `zcodecli` 是主控 Agent 与这个车间之间的输送带。**
+
+---
+
+### 🚀 插件一键安装
+在 Herdr 插件管理器中执行：
 ```bash
 herdr plugin install Nofuture123/herdr-zcode
 ```
