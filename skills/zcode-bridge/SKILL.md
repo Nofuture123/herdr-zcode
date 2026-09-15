@@ -12,6 +12,8 @@ goes through the Herdr protocol — every CLI (Codex, Claude Code, pi, ...) uses
 
 ```bash
 zcodecli open                    # open the executor pane (idempotent; returns pane id)
+                                 # lands in the caller's workspace ($HERDR_WORKSPACE_ID),
+                                 # or pass --workspace <ID> / a path (= --cwd) explicitly
 zcodecli send "<one line>"       # send a command line into the executor pane
 zcodecli result [--timeout MS]   # print parsed result of the latest task (waits if needed)
 zcodecli read [--lines N]        # read recent executor pane output

@@ -81,9 +81,18 @@ def resolve_pane(explicit=None):
     if explicit: return explicit
     lp = last_pane()
     if lp:
-        rc, out, _ = herdr(["pane", "get", "--pane", lp])
+        rc, out, _ = herdr(["pane", "get", lp])   # positional: pane get has no --pane option
         if rc == 0:
-            return lp          # last-used executor still alive: keep sticky
+            labeled = []
+            try:
+                walk_find(json.loads(out), lambda d: "label" in d, labeled)
+            except json.JSONDecodeError:
+                pass
+            # stick only when the id still points at a bridge pane — after a
+            # pane move/close the id can outlive its executor and land on a
+            # plain shell that would swallow sent lines without any receipt
+            if not labeled or labeled[0].get("label") == LABEL:
+                return lp
     rc, stdout, stderr = herdr(["pane", "list", "--json"])
     if rc != 0:
         rc2, out2, err2 = herdr(["pane", "list"])
@@ -145,8 +154,23 @@ def cmd_chat(a):
     os.execv(sys.executable, [sys.executable, script])
 
 def cmd_open(a):
-    rc, stdout, stderr = herdr(["plugin", "pane", "open", "--plugin", "zcode",
-                                "--entrypoint", "executor", "--placement", a.placement])
+    args = ["plugin", "pane", "open", "--plugin", "zcode",
+            "--entrypoint", "executor", "--placement", a.placement]
+    ws_arg = a.workspace
+    if ws_arg and (os.path.isdir(ws_arg) or ws_arg.startswith(("/", "~", "."))):
+        # plugin pane open --workspace wants a workspace ID (e.g. w73), not a
+        # path; a path almost always means the caller wants the cwd — same
+        # fixup as chat-open, landed via --cwd
+        args += ["--cwd", os.path.realpath(os.path.expanduser(ws_arg))]
+        print("note: --workspace got a path; using it as --cwd (default workspace)",
+              file=sys.stderr)
+        ws_arg = None
+    # explicit ID > $HERDR_WORKSPACE_ID (masters run inside herdr panes) >
+    # herdr's session default — same resolution order as chat-open
+    ws_id = a.herdr_workspace or ws_arg or os.environ.get("HERDR_WORKSPACE_ID")
+    if ws_id:
+        args += ["--workspace", ws_id]
+    rc, stdout, stderr = herdr(args)
     print((stdout or stderr).strip()); return rc
 
 def need_pane(explicit=None):
@@ -161,8 +185,12 @@ def auto_open_executor(timeout_s=3.0):
     """No executor pane: open the reception pane ourselves (idempotent). The
     open response carries the pane id, so this is instant; input typed before
     the executor finishes booting is buffered by the tty line discipline."""
-    _, stdout, _ = herdr(["plugin", "pane", "open", "--plugin", "zcode",
-                          "--entrypoint", "executor", "--placement", "tab"])
+    args = ["plugin", "pane", "open", "--plugin", "zcode",
+            "--entrypoint", "executor", "--placement", "tab"]
+    ws_id = os.environ.get("HERDR_WORKSPACE_ID")   # open in the caller's workspace
+    if ws_id:
+        args += ["--workspace", ws_id]
+    _, stdout, _ = herdr(args)
     try:
         pid = json.loads(stdout)["result"]["plugin_pane"]["pane"]["pane_id"]
         if pid:
@@ -511,7 +539,7 @@ def cmd_steer(a):
 p = argparse.ArgumentParser(prog="zcodecli")
 p.add_argument("--pane", default=None, help="target a specific executor/chat pane id (default: the zcode-bridge reception pane)")
 sub = p.add_subparsers(dest="cmd")
-s = sub.add_parser("open"); s.add_argument("--placement", default="tab", choices=["tab", "split", "overlay", "zoomed"]); s.set_defaults(fn=cmd_open)
+s = sub.add_parser("open"); s.add_argument("--placement", default="tab", choices=["tab", "split", "overlay", "zoomed"]); s.add_argument("--workspace", default=None, help="workspace ID (e.g. w7Y); a path is used as --cwd"); s.add_argument("--herdr-workspace", default=None, help="herdr workspace ID (e.g. w7Y); default: $HERDR_WORKSPACE_ID"); s.set_defaults(fn=cmd_open)
 s = sub.add_parser("chat-open"); s.add_argument("--workspace", default=None); s.add_argument("--herdr-workspace", default=None, help="herdr workspace ID (e.g. w7Y) for the new tab; default: $HERDR_WORKSPACE_ID"); s.add_argument("--cwd", default=None); s.add_argument("--label", default=None); s.set_defaults(fn=cmd_chat_open)
 s = sub.add_parser("send"); s.add_argument("text"); s.add_argument("--workspace", default=None,
                    help="override workspace (default: caller's cwd)")
