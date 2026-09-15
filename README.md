@@ -44,6 +44,13 @@ calls `▸ …`, tool results `✓/✗`) as it works — set `QAB_EXEC_QUIET=1` 
 pane to mute. Note the executor locks its workspace per task (serial); parallel
 tickets need distinct workspace paths (worktrees or directory aliases).
 
+## Steering a running task
+`/steer <new instruction>` (or `zcodecli steer <text>`) redirects the running
+turn: the current ticket is cancelled and the new instruction relaunches in the
+**same native ZCode session** once it reaches terminal state — the model keeps
+all prior context. Relaunches retry through the router's workspace-lock release
+window, so steering never collides with the serial lock.
+
 ## Uninstall
 Action **"ZCode: cleanup before uninstall"**, then `herdr plugin uninstall zcode`.
 

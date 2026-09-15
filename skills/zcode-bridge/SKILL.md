@@ -72,7 +72,12 @@ serial queue for quick one-off delegations.
      (Exception: a `workspace_busy` failure means the task never started, so the key is
      released and the same key may be resubmitted immediately.)
 4. `/continue <text>` — follow-up on the same native ZCode session (rework rounds).
-5. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
+5. `/steer <text>` (or `zcodecli steer <text>`) — change direction while a task
+   is RUNNING: cancels the live ticket and relaunches with the new instruction
+   in the SAME native session after it reaches terminal (context preserved).
+   Use instead of cancel+resend; steering retries through the router's
+   workspace-lock release window automatically.
+6. `/status` `/list` `/inspect <id>` `/cancel <id>` — manage tasks.
    One task runs at a time. Completion is shown as a dim rule line and — for
    machines — ALWAYS lands in `~/.local/share/herdr-zcode/results/<task_id>.json`
    (`status`, `summary`, `summary_full`, `verify`, `changed_files`). Masters must read
