@@ -32,8 +32,9 @@ def main():
         argv = [node, bin_]
     else:
         argv = [bin_]
-    if hasattr(os, "execv"):
+    if os.name != "nt" and hasattr(os, "execv"):
         return os.execv(argv[0], argv)
+    # Windows: execv would tear down the ConPTY (see pane_entry) — wait instead
     return subprocess.call(argv) if (subprocess := __import__("subprocess")) else 1
 
 if __name__ == "__main__":

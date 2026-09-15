@@ -46,8 +46,19 @@ def main():
     except Exception:
         pass
     script = os.path.join(HERE, "executor_repl.py")
-    if hasattr(os, "execv"):
+    if os.name != "nt" and hasattr(os, "execv"):
         return os.execv(sys.executable, [sys.executable, script])
+    # Windows os.execv spawns a child and EXITS the parent; the ConPTY sees its
+    # client process exit and tears down the pty, killing the freshly spawned
+    # executor with it. Run the executor in-process so the pane lives exactly
+    # as long as it does.
+    sys.argv = [script]
+    import runpy
+    try:
+        runpy.run_path(script, run_name="__main__")
+    except SystemExit as e:
+        return e.code or 0
+    return 0
     return subprocess.call([sys.executable, script])
 
 if __name__ == "__main__":

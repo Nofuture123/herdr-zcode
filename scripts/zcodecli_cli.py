@@ -41,7 +41,10 @@ def wrap_dw(t, width):
 
 LABEL = "zcode-bridge"
 HERDR = os.environ.get("HERDR_BIN_PATH", "herdr")
-NAR = os.path.expanduser("~/.local/share/herdr-zcode/bin/nar")
+# nar launcher: real file in the runtime bin — `nar.cmd` on Windows (CreateProcessW
+# cannot exec .cmd, but subprocess/cmd resolves it), `nar` elsewhere
+NAR = os.path.join(os.path.expanduser("~"), ".local", "share", "herdr-zcode", "bin",
+                   "nar.cmd" if os.name == "nt" else "nar")
 
 def herdr(args, timeout=60):
     p = subprocess.run([HERDR] + args, capture_output=True, text=True, timeout=timeout)
@@ -445,6 +448,8 @@ def cmd_list(a):
 def cmd_nar_inspect(a):
     if not os.path.exists(NAR):
         print("bridge not installed; run the plugin startup or ensure-bridge.sh", file=sys.stderr); return 2
+    if os.name == "nt":
+        return subprocess.call([NAR, "inspect"] + a.nar_args)   # execv can't run .cmd
     os.execv(NAR, [NAR, "inspect"] + a.nar_args)
 
 def cmd_open_session(a):

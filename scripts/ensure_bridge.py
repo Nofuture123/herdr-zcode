@@ -184,8 +184,13 @@ def write_wrappers(py, node_bin, zcode_bin):
                     f'"{py}" "{SCRIPTS}\\{exe}" %*\r\n')
         write("zcodecli.cmd", cmd("zcodecli_cli.py"))
         write("zcodecli-mcp.cmd", cmd("zcodecli_mcp.py"))
+        # NOT nar.exe: pip .exe shims embed the venv they were built in; our
+        # atomic venv.new→venv switch orphans them (silently exits 0). Call the
+        # module through the venv python instead.
         write("nar.cmd", f'@echo off\r\nset "ZCODE_BIN={zcode_bin}"\r\n'
-                         f'"{os.path.join(VENV, "Scripts", "nar.exe")}" %*\r\n')
+                         f'"{os.path.join(VENV, "Scripts", "python.exe")}" '
+                         f'-c "import sys; from native_agent_router.cli import main; '
+                         f'sys.exit(main())" %*\r\n')
     # env.sh for unix wrappers + tools
     prefix = os.path.dirname(node_bin) if node_bin else "/opt/homebrew/bin"
     with open(os.path.join(BASE, "env.sh"), "w", newline="\n") as f:
