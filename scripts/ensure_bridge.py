@@ -193,11 +193,26 @@ def path_launchers():
         with open(src) as f:
             body = f.read()
         if os.path.islink(dst):
-            os.remove(dst)                      # legacy install: symlink -> real file
+            target = os.path.realpath(dst)
+            if BASE in target or "qonnwolf-zcode-bridge" in target:
+                os.remove(dst)              # legacy install of ours: symlink -> real file
+            else:
+                print(f"skip: {dst} is a foreign symlink (left untouched)")
+                continue
         if os.path.exists(dst):
             with open(dst) as f:
-                if f.read() == body:
-                    installed.append(dst); continue
+                cur = f.read()
+            if cur == body:
+                installed.append(dst); continue
+            # our own launcher from an earlier install (runtime renamed once):
+            # refresh it so upgrades actually ship new launcher bodies
+            if "herdr-zcode" in cur or "qonnwolf-zcode-bridge" in cur:
+                with open(dst, "w", newline="\n") as f:
+                    f.write(body)
+                os.chmod(dst, 0o755)
+                installed.append(dst)
+                print(f"PATH launcher refreshed: {dst}")
+                continue
             print(f"skip: {dst} already exists (not ours)")
             continue
         with open(dst, "w", newline="\n") as f:

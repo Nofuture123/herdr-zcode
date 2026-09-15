@@ -37,10 +37,12 @@ def main():
         # PATH, so prepend the toolchain dirs (mirrors the old env.sh export).
         node_dir = os.path.dirname(saved.get("node")) if saved.get("node") else ""
         prepend = [d for d in (node_dir, "/opt/homebrew/bin", "/usr/local/bin") if d]
+        sep = os.pathsep
         cur = os.environ.get("PATH", "")
-        missing = [d for d in prepend if cur.split(":") and d not in cur.split(":")]
+        parts = cur.split(sep) if cur else []
+        missing = [d for d in prepend if d not in parts]
         if missing:
-            os.environ["PATH"] = ":".join(missing) + ":" + cur
+            os.environ["PATH"] = sep.join(missing) + sep + cur
     except Exception:
         pass
     script = os.path.join(HERE, "executor_repl.py")

@@ -4,6 +4,8 @@
   <text>   -> a turn in this pane's session (owner-authorized full access)
   {json}   -> strict spec, fail-closed; edit/yolo requires verify
   /cancel  -> tri-state cancel of the running turn
+  /steer <text> -> redirect the running turn; relaunches at terminal in the
+                   SAME native session (never submits over a live ticket)
   /status | /help | /quit
 Facts reported (status/verify_ok/out_of_scope); acceptance = master's job.
 """
@@ -42,7 +44,9 @@ class Chat:
                       verify=spec["verify"] or None, mode=spec["mode"],
                       permission_policy=spec["policy"], timeout_sec=float(spec["timeout"]),
                       idempotency_key=spec.get("idempotency_key"))
-        if self.root: kwargs["session_ref"] = self.root   # pane == one session
+        # explicit ref (steer/continue) wins; otherwise pane == one session
+        sref = spec.get("session_ref") or self.root
+        if sref: kwargs["session_ref"] = sref
         try:
             snap = self.kernel.submit("zcode", spec["goal"], spec["workspace"], **kwargs)
         except Exception as e:
@@ -119,32 +123,26 @@ class Chat:
             if getattr(self, "_tail", None): self._tail.set()
             self._launch_pending_steer_turn(tid)
             if self.busy == tid: self.busy = None
-            report("idle")
+            if not self.busy: report("idle")
         threading.Thread(target=waiter, daemon=True).start()
 
     def do_steer(self, text):
-        """Redirect the running turn: cancel it, resubmit in the SAME native
-        session with the new instruction."""
+        """Redirect the running turn: park the new instruction and cancel the
+        live ticket; the relaunch happens at terminal in the SAME native
+        session. Never submit while the old ticket is un-terminal — NAR
+        serializes per workspace, an early resubmit just gets busy-rejected."""
         if not self.busy:
-            c_line = self.sig("error", "nothing running")
+            self.sig("error", "nothing running")
             return
         old_tid = self.busy
-        old_spec = dict(getattr(self, "active_spec", {}) or {})
-        self.out(f"{YEL}cancelling {old_tid} for steering …{RST}")
+        self.pending_steer = text
+        self.out(f"{YEL}steering: cancelling {old_tid}; new instruction "
+                 f"relaunches at terminal{RST}")
         try:
             self.kernel.cancel(old_tid)
         except Exception as e:
+            self.pending_steer = None
             self.sig("error", f"steer cancel failed: {sanitize(str(e), 120)}")
-            return
-        spec = dict(old_spec)
-        spec["goal"] = text
-        spec["session_ref"] = old_tid
-        spec.pop("idempotency_key", None)
-        self.busy = None
-        rid = broker.new_request_id()
-        broker.save_request(rid, spec)
-        self.out(f"{YEL}↻ steering {old_tid} → new instruction{RST}")
-        self.run_turn(json.dumps(spec, ensure_ascii=False))
 
     def _launch_pending_steer_turn(self, finished_tid):
         if getattr(self, "pending_steer", None) and finished_tid:
@@ -153,14 +151,17 @@ class Chat:
             spec["goal"] = text
             spec["session_ref"] = finished_tid
             spec.pop("idempotency_key", None)
-            self.run_turn(json.dumps(spec, ensure_ascii=False))
+            self.out(f"{YEL}↻ steering → {sanitize(text, 60)}{RST}")
+            # inherit the running turn's privilege: it was already accepted, so
+            # don't re-demand verify (chat plain-text defaults run yolo without it)
+            self.run_turn(json.dumps(spec, ensure_ascii=False), require_verify=False)
 
-    def run_turn(self, line):
+    def run_turn(self, line, require_verify=True):
         rid = broker.new_request_id()
         try:
             if line.startswith("{"):
                 spec = broker.normalize_spec(json.loads(line), self.ws, MODE, POLICY,
-                                             require_verify=True)
+                                             require_verify=require_verify)
             else:
                 spec = broker.normalize_spec({"goal": line, "workspace": self.ws},
                                              self.ws, MODE, POLICY)
@@ -255,8 +256,9 @@ class Chat:
         if line:
             self.out(line)
         if getattr(self, "_tail", None): self._tail.set()
-        busy_none(self)
-        report("idle")
+        self._launch_pending_steer_turn(tid)
+        if self.busy == tid: self.busy = None
+        if not self.busy: report("idle")
 
 def busy_none(chat):
     chat.busy = None

@@ -16,10 +16,16 @@ def load(name, path):
 broker = load("broker", os.path.join(ROOT, "scripts", "broker.py"))
 broker.REQUESTS = os.path.join(tmp, "requests"); broker.LEDGERS = os.path.join(tmp, "ledgers")
 broker.RESULTS = os.path.join(tmp, "results"); broker.init_dirs()
+# executor_common decides color at import time; keep the suite hermetic against
+# ambient NO_COLOR/QAB_EXEC_PLAIN (a NO_COLOR env once failed the gate only in
+# other agents' shells)
+for _k in ("NO_COLOR", "QAB_EXEC_PLAIN"):
+    os.environ.pop(_k, None)
 # executor_common loads its own broker copy; point it at the same redirected dirs
 ec = load("executor_common", os.path.join(ROOT, "scripts", "executor_common.py"))
 ec.broker.REQUESTS, ec.broker.LEDGERS, ec.broker.RESULTS = broker.REQUESTS, broker.LEDGERS, broker.RESULTS
 er = load("executor_repl", os.path.join(ROOT, "scripts", "executor_repl.py"))
+echat = load("executor_chat", os.path.join(ROOT, "scripts", "executor_chat.py"))
 
 class FakeKernel:
     def __init__(self, sticky=False):
@@ -104,8 +110,10 @@ class TestReception(unittest.TestCase):
         spec = {"goal": "v1", "workspace": WS, "mode": "plan", "idempotency_key": "c1"}
         r.start(json.dumps(spec))
         rid = r.last and None
+        # match by goal — the shared requests dir accumulates other tests' files
         rid = [json.load(open(os.path.join(broker.REQUESTS, f)))["request_id"]
-               for f in os.listdir(broker.REQUESTS)][-1]
+               for f in os.listdir(broker.REQUESTS)
+               if json.load(open(os.path.join(broker.REQUESTS, f)))["spec"].get("goal") == "v1"][0]
         parent_tid = k.submits[-1] and None
         r.do_continue(f"{rid} fix it please")
         self.assertEqual(len(k.submits), 2)
@@ -372,3 +380,74 @@ class TestSteer(unittest.TestCase):
         r.process("/steer do something")
         self.assertIn("nothing running", buf.getvalue())
         self.assertEqual(k.submits, [])
+
+
+class TestChatSteer(unittest.TestCase):
+    """steer v2 semantics in chat: park at steer-time, relaunch at terminal,
+    same native session — on both the foreground drain and the backgrounded
+    waiter path (the cancel→resubmit busy race must stay dead)."""
+
+    def make(self, sticky=False):
+        k = FakeKernel(sticky=sticky); buf = io.StringIO()
+        c = echat.Chat(k, out=lambda s=None: buf.write((s or "") + "\n"), ws=WS)
+        c.q = queue.Queue()
+        return k, buf, c
+
+    def test_foreground_steer_relaunches_after_terminal(self):
+        k, buf, c = self.make(sticky=False)
+        c.q.put("/steer switch to v2 design")   # consumed by run_turn's drain loop
+        c.run_turn("build v1")
+        self.assertEqual(len(k.submits), 2)
+        self.assertEqual(k.tasks["t-000001"]["status"], "cancelled")
+        self.assertIn("t-000001", k.cancelled)
+        self.assertEqual(k.submits[1]["goal"], "switch to v2 design")
+        self.assertEqual(k.submits[1].get("session_ref"), "t-000001")
+        self.assertIsNone(k.submits[1].get("idempotency_key"))
+        self.assertIsNone(c.pending_steer)
+        self.assertIsNone(c.busy)
+
+    def _submit(self, c, spec):
+        rid = broker.new_request_id()
+        broker.save_request(rid, spec)
+        c.submit(dict(spec), rid)
+
+    def test_do_steer_parks_until_terminal_then_waiter_relaunches(self):
+        k, buf, c = self.make(sticky=True)
+        # the backgrounded-turn window: run_turn returned via wait_timeout, the
+        # waiter thread holds busy until terminal, the main loop is free
+        spec = {"goal": "build v1", "workspace": WS, "scope": [], "verify": [],
+                "mode": "plan", "policy": "allow", "timeout": 10}
+        self._submit(c, spec)
+        first = c.busy
+        self.assertTrue(first)
+        c.background_wait(first, "r-test", nonce=None)
+        c.do_steer("switch to v2 design")
+        self.assertEqual(k.cancelled, [first])
+        self.assertEqual(c.pending_steer, "switch to v2 design")
+        self.assertEqual(len(k.submits), 1)     # steer itself never submits
+        k.tasks[first]["status"] = "succeeded"  # terminal releases the waiter
+        for _ in range(50):
+            if len(k.submits) >= 2: break
+            time.sleep(0.1)
+        self.assertEqual(len(k.submits), 2)
+        self.assertEqual(k.submits[1]["goal"], "switch to v2 design")
+        self.assertEqual(k.submits[1].get("session_ref"), first)
+        self.assertIsNone(k.submits[1].get("idempotency_key"))
+
+    def test_do_steer_with_no_running_task(self):
+        k, buf, c = self.make()
+        c.do_steer("do something")
+        self.assertIn("nothing running", buf.getvalue())
+        self.assertEqual(k.submits, [])
+
+    def test_submit_prefers_spec_session_ref_over_root(self):
+        k, buf, c = self.make()
+        spec = {"goal": "steered", "workspace": WS, "scope": [], "verify": [],
+                "mode": "plan", "policy": "allow", "timeout": 10,
+                "session_ref": "t-explicit"}
+        self._submit(c, spec)
+        self.assertEqual(k.submits[0].get("session_ref"), "t-explicit")
+        c.root = "t-root"
+        plain = {k2: v for k2, v in spec.items() if k2 != "session_ref"}
+        self._submit(c, plain)
+        self.assertEqual(k.submits[1].get("session_ref"), "t-root")   # pane == one session

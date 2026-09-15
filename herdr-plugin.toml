@@ -32,12 +32,13 @@ placement = "split"
 command = ["python", "scripts/tui_entry.py"]
 
 # The delegation bridge: serial task queue backed by NAR -> ZCode headless.
+# ONE pane entry — herdr rejects duplicate pane ids. `python3` resolves on
+# all three platforms: Windows via the python3 shim ensure_bridge installs.
 [[panes]]
 id = "executor"
 title = "zcode-bridge"
 placement = "tab"
 command = ["python3", "scripts/pane_entry.py"]
-platforms = ["macos", "linux"]
 
 [[actions]]
 id = "open-here"
