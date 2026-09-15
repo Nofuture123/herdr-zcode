@@ -28,7 +28,8 @@ TASK_RE = re.compile(r"^t-[0-9a-f]+$")
 REQ_RE = re.compile(r"^r-[0-9a-f]{16}$")
 NONCE_RE = re.compile(r"^[0-9a-zA-Z_-]{1,64}$")
 ALLOWED_KEYS = {"goal", "workspace", "mode", "scope", "verify", "policy",
-                "timeout", "idempotency_key", "session_ref", "forbid", "nonce"}
+                "timeout", "idempotency_key", "session_ref", "forbid", "nonce",
+                "request_id"}
 MODES = {"plan", "build", "edit", "yolo"}
 POLICIES = {"allow", "deny"}
 
@@ -96,9 +97,15 @@ def normalize_spec(obj, default_ws, default_mode="yolo", default_policy="allow",
     nonce = obj.get("nonce")
     if nonce is not None and not isinstance(nonce, str):
         raise SpecError("nonce must be a string")
-    return {"goal": goal, "workspace": ws, "mode": mode, "scope": scope,
-            "verify": verify, "policy": policy, "timeout": timeout,
-            "idempotency_key": ikey, "session_ref": sref, "nonce": nonce}
+    rid = obj.get("request_id")
+    if rid is not None and not REQ_RE.match(rid or ""):
+        raise SpecError(f"bad request_id: {rid!r}")
+    out = {"goal": goal, "workspace": ws, "mode": mode, "scope": scope,
+           "verify": verify, "policy": policy, "timeout": timeout,
+           "idempotency_key": ikey, "session_ref": sref, "nonce": nonce}
+    if rid:
+        out["request_id"] = rid
+    return out
 
 
 def fingerprint(spec):
@@ -158,6 +165,61 @@ def find_request_by_task(task_id):
         if rec.get("task_id") == task_id:
             return rec
     return None
+
+
+def claim_request(request_id, pane_id):
+    """Exclusive delivery claim for a client-written request file.
+
+    send 落盘 request 后,任何 executor 都可能把它领走(谁闲谁领, pane 死了票也不
+    丢)。单一 claim 文件、内容记领取者:返回 "new"(本 pane 领取成功)/"mine"
+    (本 pane 已领过)/"taken"(别的 pane 已领,本次投递作废)。
+    """
+    if not REQ_RE.match(request_id or ""):
+        return "taken"
+    safe = re.sub(r"[^A-Za-z0-9]", "", pane_id or "pane") or "pane"
+    claimp = os.path.join(REQUESTS, f"{request_id}.claim")
+    try:
+        fd = os.open(claimp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(fd, (safe + "\n").encode())
+        os.close(fd)
+        return "new"
+    except FileExistsError:
+        try:
+            with open(claimp) as f:
+                return "mine" if f.read().strip() == safe else "taken"
+        except OSError:
+            return "taken"
+    except OSError:
+        return "taken"
+
+
+def unclaimed_requests():
+    """Client-written, still-unclaimed disk tickets, oldest first.
+
+    只有票面显式带 request_id 的才算磁盘投递票(opt-in)——executor 自己落盘的
+    历史票没有这个字段,结构性排除,扫描线程绝不重跑历史。
+    """
+    out = []
+    try:
+        names = os.listdir(REQUESTS)
+    except OSError:
+        return out
+    for f in sorted(names):
+        if not f.endswith(".json"):
+            continue
+        rid = f[:-5]
+        if not REQ_RE.match(rid):
+            continue
+        if f"{rid}.claim" in names:
+            continue
+        try:
+            rec = json.load(open(os.path.join(REQUESTS, f)))
+        except Exception:
+            continue
+        if not (rec.get("spec") or {}).get("request_id"):
+            continue
+        out.append(os.path.join(REQUESTS, f))
+    return out
 
 
 def result_path(task_id):

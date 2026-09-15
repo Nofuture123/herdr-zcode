@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
                              receipt_ok, receipt_err, attach_summary_full, WARN, marker_line,
-                             display_text, _C_DIM)
+                             display_text, _C_DIM, start_disk_pickup)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -199,6 +199,16 @@ class Chat:
             if raw_nonce: err["nonce"] = raw_nonce
             receipt_err(raw_nonce, err["error"], request_id=rid)
             return self.sig("error", json.dumps(err, ensure_ascii=True))
+        if spec.get("request_id"):
+            # client-written ticket: exclusive claim; taken = another pane owns it
+            st = broker.claim_request(spec["request_id"],
+                                      os.environ.get("HERDR_PANE_ID") or "chat")
+            if st == "taken":
+                err = {"ok": False, "error": "duplicate delivery: request claimed elsewhere"}
+                if spec.get("nonce"): err["nonce"] = spec["nonce"]
+                receipt_err(spec.get("nonce"), err["error"], request_id=rid)
+                return self.sig("error", json.dumps(err, ensure_ascii=True))
+            rid = spec["request_id"]
         self.current_nonce = spec.get("nonce")
         if spec.get("idempotency_key"):
             st, rec = broker.idempotency_claim(spec["idempotency_key"], broker.fingerprint(spec))
@@ -323,6 +333,8 @@ def main(kernel=None):
         for raw in sys.stdin: c.q.put(raw)
         c.q.put(None)
     threading.Thread(target=reader, daemon=True).start()
+    start_disk_pickup(c.q, os.environ.get("HERDR_PANE_ID") or "chat",
+                      lambda: c.busy is not None)
     while True:
         raw = c.q.get()
         if raw is None: break

@@ -256,6 +256,20 @@ def cmd_send(a):
                 text = json.dumps(obj, ensure_ascii=False)
         except json.JSONDecodeError:
             pass
+    # disk delivery: the request file is the guaranteed channel (any executor
+    # picks it up, even if this pane dies mid-delivery); the pane line is its
+    # fast-path copy. Raw/slash lines stay pure tty — that's the human path.
+    try:
+        env = json.loads(text)
+    except Exception:
+        env = None
+    if not a.raw and not stripped.startswith("/") and isinstance(env, dict):
+        env["request_id"] = "r-" + secrets.token_hex(8)
+        text = json.dumps(env, ensure_ascii=False)
+        try:
+            broker.save_request(env["request_id"], env)
+        except Exception:
+            pass   # 磁盘通道不可用:面板快路径仍在线上
     rc, stdout, stderr = herdr(["pane", "run", pid, text])
     if rc != 0 and "pane_not_found" in (stderr or "") and not getattr(a, "pane", None):
         pid = auto_open_executor()          # targeted pane was closed; self-heal

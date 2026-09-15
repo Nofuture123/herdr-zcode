@@ -181,6 +181,49 @@ def persist(d):
             json.dump(d, f, indent=1)
         os.chmod(broker.result_path(tid), 0o600)
 
+# ---------- disk-pickup: client-written request files ----------
+# send 客户端把 request 文件直接落盘(主投递通道),pane run 打字只是它的快路径副本。
+# executor 用这条扫描线领取没有 claim 的票:谁闲谁领,pane 死了票也不丢,与 tty 的
+# 一切怪癖(重启窗口、TUI 竞态、错误 tty、echo 状态)彻底解耦。
+
+def start_disk_pickup(q, pane_id, busy_fn):
+    """Scan REQUESTS for unclaimed client-written tickets and enqueue them as
+    JSON lines into the executor's stdin queue. busy_fn()=True 时跳过(票留给
+    闲着的 executor 或稍后);领取成功的票由主循环正常处理并写 receipt。"""
+    import threading
+    def scan():
+        seen = set()
+        while True:
+            try:
+                for path in broker.unclaimed_requests():
+                    try:
+                        rec = json.load(open(path))
+                    except Exception:
+                        continue
+                    spec = rec.get("spec") or {}
+                    rid = rec.get("request_id") or spec.get("request_id")
+                    if not rid or rid in seen:
+                        continue
+                    try:
+                        age = time.time() - float(rec.get("ts") or 0)
+                    except (TypeError, ValueError):
+                        age = 999
+                    if age < 8:
+                        continue   # 新票:面板快路径大概率正在投递,不抢(pane 亲和)
+                    if busy_fn():
+                        break   # 本 pane 正忙:票留给别人/稍后再扫
+                    st = broker.claim_request(rid, pane_id)
+                    if st == "new":
+                        seen.add(rid)
+                        q.put(json.dumps(spec, ensure_ascii=False) + "\n")
+                    elif st == "mine":
+                        seen.add(rid)
+                    # taken:别的 pane 领了,直接无视
+            except Exception:
+                pass
+            time.sleep(1.0)
+    threading.Thread(target=scan, daemon=True).start()
+
 # ---------- live native output streaming ----------
 # Palette: pi's "enchanted-forest" theme (awesome-pi-themes), truecolor.
 _RST = "\033[0m"

@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from executor_common import (broker, build_kernel, report, remember_session,
                              emit, collect, persist, sanitize, stream_native_output,
                              receipt_ok, receipt_err, attach_summary_full, WARN, marker_line,
-                             display_text, _C_DIM)
+                             display_text, _C_DIM, start_disk_pickup)
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
@@ -235,6 +235,14 @@ class Reception:
             try: raw_nonce = json.loads(line).get("nonce")
             except Exception: pass
             return self.sig_error(f"rejected (fail-closed): {e}", nonce=raw_nonce)
+        if spec.get("request_id"):
+            # client-written ticket (disk pickup / pane fast-path copy): claim
+            # exclusively; "taken" = another pane already owns this delivery
+            st = broker.claim_request(spec["request_id"], self.pane_id or "repl")
+            if st == "taken":
+                return self.sig_error("duplicate delivery: request claimed elsewhere",
+                                      nonce=spec.get("nonce"))
+            rid = spec["request_id"]
         fp = broker.fingerprint(spec)
         if spec.get("idempotency_key"):
             st, rec = broker.idempotency_claim(spec["idempotency_key"], fp)
@@ -421,6 +429,7 @@ def main(kernel=None):
         for raw in sys.stdin: r.q.put(raw)
         r.q.put(None)
     threading.Thread(target=reader, daemon=True).start()
+    start_disk_pickup(r.q, r.pane_id or "repl", lambda: r.busy is not None)
     while True:
         raw = r.q.get()
         if raw is None: break

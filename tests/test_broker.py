@@ -159,3 +159,50 @@ class TestReceipts(unittest.TestCase):
         self.assertIn("nonce", r)
         self.assertIsNone(broker.load_receipt("../evil"))
         self.assertIsNone(broker.load_receipt("never-sent"))
+
+
+class TestDiskDelivery(unittest.TestCase):
+    """v0.8.0 磁盘投递:request_id 直通 + 独占领取 + 未领扫描。"""
+
+    def test_normalize_passes_request_id_and_rejects_bad(self):
+        spec = broker.normalize_spec({"goal": "x", "workspace": WS,
+                                      "request_id": "r-0123456789abcdef"}, WS)
+        self.assertEqual(spec["request_id"], "r-0123456789abcdef")
+        with self.assertRaises(broker.SpecError):
+            broker.normalize_spec({"goal": "x", "workspace": WS,
+                                   "request_id": "not-a-rid"}, WS)
+
+    def test_claim_new_mine_taken(self):
+        rid = broker.new_request_id()
+        broker.save_request(rid, {"goal": "x", "request_id": rid})
+        self.assertEqual(broker.claim_request(rid, "w1:p1"), "new")
+        self.assertEqual(broker.claim_request(rid, "w1:p1"), "mine")
+        self.assertEqual(broker.claim_request(rid, "w2:p2"), "taken")
+
+    def test_claim_bad_rid_is_taken(self):
+        self.assertEqual(broker.claim_request("garbage", "w1:p1"), "taken")
+
+    def test_unclaimed_skips_claimed_and_junk(self):
+        rid = broker.new_request_id()
+        broker.save_request(rid, {"goal": "x", "request_id": rid, "ts_marker": rid})
+        # 同目录里的非票文件(tmp-*、claim-*)不许出现在未领列表
+        junk = os.path.join(broker.REQUESTS, "tmp-junk")
+        open(junk, "w").write("{}")
+        try:
+            un = [os.path.basename(p) for p in broker.unclaimed_requests()]
+            self.assertIn(rid + ".json", un)
+            self.assertNotIn("tmp-junk", un)
+        finally:
+            os.remove(junk)
+        broker.claim_request(rid, "w9:p9")
+        un = [os.path.basename(p) for p in broker.unclaimed_requests()]
+        self.assertNotIn(rid + ".json", un)
+
+    def test_unclaimed_excludes_historical_tickets(self):
+        # 历史票(executor 落盘,spec 无 request_id)结构性排除——绝不重跑
+        rid = broker.new_request_id()
+        rec = {"request_id": rid, "spec": {"goal": "x", "workspace": WS}, "ts": 1}
+        with open(os.path.join(broker.REQUESTS, rid + ".json"), "w") as f:
+            json.dump(rec, f)
+        un = [os.path.basename(p) for p in broker.unclaimed_requests()]
+        self.assertNotIn(rid + ".json", un)
