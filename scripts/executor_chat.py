@@ -200,14 +200,16 @@ class Chat:
             receipt_err(raw_nonce, err["error"], request_id=rid)
             return self.sig("error", json.dumps(err, ensure_ascii=True))
         if spec.get("request_id"):
-            # client-written ticket: exclusive claim; taken = another pane owns it
+            # client-written ticket: exclusive claim; "taken" is NOT a failure —
+            # another pane is already handling it; ack so the master waits there
             st = broker.claim_request(spec["request_id"],
                                       os.environ.get("HERDR_PANE_ID") or "chat")
             if st == "taken":
-                err = {"ok": False, "error": "duplicate delivery: request claimed elsewhere"}
-                if spec.get("nonce"): err["nonce"] = spec["nonce"]
-                receipt_err(spec.get("nonce"), err["error"], request_id=rid)
-                return self.sig("error", json.dumps(err, ensure_ascii=True))
+                receipt_ok(spec.get("nonce"), request_id=spec["request_id"],
+                           task_id="-", status="claimed-elsewhere")
+                self.out(f"{DIM}↗ {spec['request_id']} 已由其他 executor 领取,结果仍以 "
+                         f"request_id 查询{RST}")
+                return None
             rid = spec["request_id"]
         self.current_nonce = spec.get("nonce")
         if spec.get("idempotency_key"):

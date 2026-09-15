@@ -109,8 +109,11 @@ def normalize_spec(obj, default_ws, default_mode="yolo", default_policy="allow",
 
 
 def fingerprint(spec):
-    canon = json.dumps({k: spec.get(k) for k in sorted(spec)}, sort_keys=True,
-                       ensure_ascii=True, separators=(",", ":"))
+    """Stable identity of the WORK, not the delivery: transport fields
+    (request_id, nonce) are excluded so a retried send with the same
+    idempotency_key lands as "duplicate", never as a false "conflict"."""
+    body = {k: v for k, v in spec.items() if k not in ("request_id", "nonce")}
+    canon = json.dumps(body, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     return hashlib.sha256(canon.encode()).hexdigest()
 
 

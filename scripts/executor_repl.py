@@ -237,11 +237,15 @@ class Reception:
             return self.sig_error(f"rejected (fail-closed): {e}", nonce=raw_nonce)
         if spec.get("request_id"):
             # client-written ticket (disk pickup / pane fast-path copy): claim
-            # exclusively; "taken" = another pane already owns this delivery
+            # exclusively. "taken" is NOT a failure — the ticket is already
+            # being handled by another pane; ack so the master awaits ITS result
             st = broker.claim_request(spec["request_id"], self.pane_id or "repl")
             if st == "taken":
-                return self.sig_error("duplicate delivery: request claimed elsewhere",
-                                      nonce=spec.get("nonce"))
+                receipt_ok(spec.get("nonce"), request_id=spec["request_id"],
+                           task_id="-", status="claimed-elsewhere")
+                self.out(f"{DIM}↗ {spec['request_id']} 已由其他 executor 领取,结果仍以 "
+                         f"request_id 查询{RST}")
+                return None
             rid = spec["request_id"]
         fp = broker.fingerprint(spec)
         if spec.get("idempotency_key"):
