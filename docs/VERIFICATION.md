@@ -148,30 +148,37 @@ zcodecli result             # 打印最新任务结构化结果
 - ⚠️ 已知小项：client cancel 的结果扫描窗口已放宽至 35s；NAR 文件库对 running 任务的可见性有延迟（以执行器面板/结果文件为准）。
 
 ## 发版门禁：多主控 × 多窗口分发矩阵（2026-09-15 起，强制）
-`scripts/e2e_dispatch.sh`——每个主控（CLI+模型）在自己的独立 herdr tab 里运行，自行
-`zcodecli chat-open` 开独立 chat pane（v0.7.3 workspace 定位），把一张 edit+verify 票
-派到独立 git 工作区；harness 只信磁盘证据（requests/results）+ notes.txt 实际内容裁决，
-任一主控 FAIL 整体 exit 1。完成判定以进程为准（pane run 回显会污染文本标记）。
+`scripts/e2e_dispatch.sh`——**交互式**真机矩阵：每个主控（CLI+模型 TUI）常驻在自己的
+独立 herdr tab 里（全程人可围观），harness 等其就绪后把派票指令敲进 TUI；主控自行
+`zcodecli chat-open` 开独立 zcode 窗口（v0.7.3 workspace 定位），把一张 edit+verify 票
+派到独立 git 工作区。harness 只信磁盘证据（requests/results）+ notes.txt 实际内容裁决，
+任一主控 FAIL 整体 exit 1。默认保留窗口供检查，`--close` 才清理。
 
-- 三主控基线（2026-09-15 20:27 实测，全 PASS）：
+- 三主控交互基线（2026-09-15 20:52 实测，全 PASS）：
 
-  | 主控 | 派发 | 执行 | 全程 |
-  |---|---|---|---|
-  | codex gpt-5.6-luna(low) | 16s | 13s | 37s |
-  | claude sonnet | 8s | 25s | 37s |
-  | pi deepseek-v4.1-flash | 6s | 15s | 26s |
+  | 主控 | 派发 | 执行 | 全程 | 备注 |
+  |---|---|---|---|---|
+  | codex gpt-5.6-luna(low) | 15s | 20s | 35s | 第 1 次敲入被 TUI 吞，重试兜住 |
+  | claude sonnet | 9s | 12s | 21s | 信任对话框自动应答 |
+  | pi deepseek-v4.1-flash | 2s | 11s | 13s | 一次成功 |
 
 - 延迟构成（同日微基准）：chat-open 0.1s；**send→回执 0.6s（纯传输+接受）**；执行
-  13–25s = ZCode 模型推理。dispatch 的大头是主控冷启动 + LLM 轮次——常驻热主控没有
-  这部分，0.6s 的传输层才是桥自身的延迟。
+  11–25s = ZCode 模型推理。dispatch 的大头是主控 TUI 启动 + LLM 轮次；0.6s 的传输层
+  才是桥自身的延迟，慢了先分层再排查。
 - 用法：`E2E_MASTERS="codex,claude,pi" bash scripts/e2e_dispatch.sh [--timeout 600]
-  [--keep]`；`--dry-run` 只看计划。任何 FAIL → 不得发版（PUBLISHING.md 门禁）。
-- 失败分层：`delivery-failed`（投递失败/无回执/拒单 → 先怀疑 herdr core 输入黑洞或
-  fail-closed 拒单）、verify 失败（执行方或票面 verify 写错）、证据缺失（主控没走完
-  流程）——三种锅分属 herdr / 执行方 / 主控，先分层再排查。
-- 环境注记：codex 走 ChatGPT 账号周配额；pi 在 herdr 外直跑会打一条
-  pi-herdr-orchestrator 扩展报错（HERDR_ENV 门禁，无害噪音）。
+  [--close]`；`--dry-run` 只看计划。任何 FAIL → 不得发版（PUBLISHING.md 门禁）。
+- 主控 TUI 的三个坑（harness 已自动处理，值得知道）：
+  1) claude 新目录首次启动弹工作区信任框且默认停在 "No, exit"——检测到即 down+enter 选 Yes；
+  2) codex TUI 初始化期敲入的文本会**整段丢失**——敲入后校验「agent 转 working 或输入框
+     可见指令片段」，否则补 Enter / 重敲（最多 3 次）；
+  3) 跨轮证据撞车——票 tag 带运行时间戳，且只认 `ts > 本次启动` 的请求，否则上一轮的
+     旧票会秒判本轮。
+- 失败分层：超时未派票（herdr core 输入黑洞 / TUI 吞输入）≠ verify 失败（执行方或票面
+  verify 写错）≠ 证据缺失（主控没走完流程）——三种锅分属 herdr / 执行方 / 主控。
+- 环境注记：codex 走 ChatGPT 账号**周配额**（2026-09-15 只剩 ~1%，跑矩阵前先 /status
+  看一眼）；pi 在 herdr 外直跑会打一条 pi-herdr-orchestrator 扩展报错（HERDR_ENV 门禁，
+  无害噪音）。
 - 已知上游风险（2026-09-15）：herdr 0.8.2 core 存在「pane 输入黑洞」——存活中的 pane
   会被静默停止转发输入（输出不受影响；rename/焦点切换/纯时间老化均排除，触发源未定，
-  无 pane.move 记录的 pane 也中过）。症状即 e2e 的 delivery-failed：`pane run`/
-  `send-text`/`send-keys` 全部无声丢失。绕行：重开面板。e2e FAIL 时先区分这一层。
+  无 pane.move 记录的 pane 也中过）。症状即超时未派票：`pane run`/`send-text`/
+  `send-keys` 全部无声丢失。绕行：重开面板。e2e FAIL 时先区分这一层。
