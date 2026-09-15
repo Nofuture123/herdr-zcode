@@ -433,6 +433,32 @@ class TestChatSteer(unittest.TestCase):
         self.assertEqual(k.submits[1]["goal"], "switch to v2 design")
         self.assertEqual(k.submits[1].get("session_ref"), first)
         self.assertIsNone(k.submits[1].get("idempotency_key"))
+        c.q.put("/quit")   # must still be there: the waiter relaunch leaves
+        # stdin to the main loop (background relaunches never drain the queue)
+        self.assertEqual(c.q.get_nowait(), "/quit")
+
+    def test_steer_relaunch_retries_on_workspace_busy(self):
+        # NAR publishes terminal before releasing the workspace lock — the
+        # relaunch can land in that gap and must retry, not die
+        class BusyFirst(FakeKernel):
+            def __init__(self):
+                super().__init__(sticky=False)
+                self.busy_done = False
+            def submit(self, agent, goal, ws, **kw):
+                if goal == "switch to v2 design" and not self.busy_done:
+                    self.busy_done = True
+                    raise RuntimeError("workspace_busy: serial lock held")
+                return super().submit(agent, goal, ws, **kw)
+        k = BusyFirst(); buf = io.StringIO()
+        c = echat.Chat(k, out=lambda s=None: buf.write((s or "") + "\n"), ws=WS)
+        c.q = queue.Queue()
+        c.q.put("/steer switch to v2 design")
+        c.run_turn("build v1")
+        self.assertTrue(k.busy_done)                    # first attempt hit the lock
+        self.assertEqual(len(k.submits), 2)             # retry landed
+        self.assertEqual(k.submits[1]["goal"], "switch to v2 design")
+        self.assertEqual(k.submits[1].get("session_ref"), "t-000001")
+        self.assertIn("retry", buf.getvalue())
 
     def test_do_steer_with_no_running_task(self):
         k, buf, c = self.make()

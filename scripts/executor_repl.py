@@ -175,8 +175,15 @@ class Reception:
 
     def _launch_pending_steer(self):
         """After a steered task reaches terminal, relaunch with the new
-        instruction in the same native session."""
+        instruction in the same native session. NAR publishes terminal status
+        before it releases the workspace lock, so a too-early relaunch fails
+        workspace_busy without ever running — retry bounded."""
         if getattr(self, "pending_steer", None) and self.last_finished_tid:
+            depth, f = 0, sys._getframe().f_back
+            while f and depth < 64: depth += 1; f = f.f_back
+            if depth >= 64:   # runaway steer chains must not exhaust the stack
+                self.pending_steer = None
+                return self.sig_error("steer chain too deep; dropped")
             text, self.pending_steer = self.pending_steer, None
             spec = dict(getattr(self, "active_spec", {}) or {})
             spec["goal"] = text
@@ -185,7 +192,19 @@ class Reception:
             rid = broker.new_request_id()
             broker.save_request(rid, spec)
             self.out(f"{YEL}↻ steering → {sanitize(text, 60)}{RST}")
-            self.run_task(spec, rid)
+            for attempt in range(12):
+                try:
+                    data = self.run_task(spec, rid) or {}
+                except Exception as e:
+                    if "workspace_busy" not in str(e) or attempt == 11:
+                        raise
+                    data = {"status": "failed", "error": str(e)}
+                if not (data.get("status") == "failed"
+                        and "workspace_busy" in str(data.get("error") or "")):
+                    return
+                self.out(f"{YEL}workspace lock still held; steer relaunch retry "
+                         f"{attempt + 2}/12 …{RST}")
+                time.sleep(0.5)
 
     def run_task(self, spec, rid):
         self.active_spec, self.active_request = spec, rid

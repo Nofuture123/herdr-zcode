@@ -30,6 +30,7 @@ class Chat:
         self.busy = None; self.root = None; self.q = queue.Queue()
         self.current_nonce = None; self.current_rid = None
         self.pending_steer = None; self.last_finished_tid = None
+        self.last_result = None
 
     def sig(self, kind, *fields):
         line = marker_line(kind, " ".join(str(f) for f in fields))
@@ -54,6 +55,8 @@ class Chat:
             if spec.get("idempotency_key"):
                 broker.idempotency_release(spec["idempotency_key"])
             self.busy = None; report("idle", force=True)
+            self.last_result = {"ok": False, "status": "failed",
+                                "error": f"submit failed: {e}"}
             receipt_err(spec.get("nonce"), f"submit failed: {e}")
             return self.sig("error", sanitize(f"submit failed: {e}", 200))
         tid = snap.get("task_id")
@@ -103,6 +106,7 @@ class Chat:
                     break
             data = collect(snap)
             data["request_id"] = rid
+            self.last_result = data
             attach_summary_full(data, tid)
             remember_session(data.get("native_session_id"))
             persist({**snap, "request_id": rid, "status": data["status"],
@@ -121,7 +125,7 @@ class Chat:
             if line:
                 self.out(line)
             if getattr(self, "_tail", None): self._tail.set()
-            self._launch_pending_steer_turn(tid)
+            self._launch_pending_steer_turn(tid, drain_input=False)
             if self.busy == tid: self.busy = None
             if not self.busy: report("idle")
         threading.Thread(target=waiter, daemon=True).start()
@@ -144,8 +148,13 @@ class Chat:
             self.pending_steer = None
             self.sig("error", f"steer cancel failed: {sanitize(str(e), 120)}")
 
-    def _launch_pending_steer_turn(self, finished_tid):
+    def _launch_pending_steer_turn(self, finished_tid, drain_input=True):
         if getattr(self, "pending_steer", None) and finished_tid:
+            depth, f = 0, sys._getframe().f_back
+            while f and depth < 64: depth += 1; f = f.f_back
+            if depth >= 64:   # runaway steer chains must not exhaust the stack
+                self.pending_steer = None
+                return self.sig("error", "steer chain too deep; dropped")
             text, self.pending_steer = self.pending_steer, None
             spec = dict(getattr(self, "active_spec", {}) or {})
             spec["goal"] = text
@@ -154,9 +163,21 @@ class Chat:
             self.out(f"{YEL}↻ steering → {sanitize(text, 60)}{RST}")
             # inherit the running turn's privilege: it was already accepted, so
             # don't re-demand verify (chat plain-text defaults run yolo without it)
-            self.run_turn(json.dumps(spec, ensure_ascii=False), require_verify=False)
+            for attempt in range(12):
+                self.run_turn(json.dumps(spec, ensure_ascii=False),
+                              require_verify=False, drain_input=drain_input)
+                res = self.last_result or {}
+                if not (res.get("status") == "failed"
+                        and "workspace_busy" in str(res.get("error") or "")):
+                    return
+                # NAR publishes terminal status before releasing the workspace
+                # lock; a relaunch in that gap fails without ever running
+                self.out(f"{YEL}workspace lock still held; steer relaunch retry "
+                         f"{attempt + 2}/12 …{RST}")
+                spec["session_ref"] = finished_tid
+                time.sleep(0.5)
 
-    def run_turn(self, line, require_verify=True):
+    def run_turn(self, line, require_verify=True, drain_input=True):
         rid = broker.new_request_id()
         try:
             if line.startswith("{"):
@@ -190,11 +211,13 @@ class Chat:
         self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {display_text(spec['goal'], 60)}{RST}")
         report("working", sanitize(spec["goal"], 80))
         tid = self.submit(spec, rid)
+        if not tid:
+            return          # submit failed; error reported, last_result recorded
         cancelled_by_us = False
         deadline = time.time() + spec["timeout"]
         while time.time() < deadline:
             try:
-                while True:
+                while drain_input:   # background relaunches leave stdin to the main loop
                     raw = self.q.get_nowait()
                     l = (raw or "").strip()
                     if l == "/cancel" or l.startswith("/cancel "):
@@ -236,6 +259,7 @@ class Chat:
             self.out(f"already_terminal ({snap.get('status')}) — task finished during cancel")
         data = collect(snap)
         data["request_id"] = rid
+        self.last_result = data
         attach_summary_full(data, tid)
         self._release_if_never_ran(spec, data)
         if not self.root and tid: self.root = tid

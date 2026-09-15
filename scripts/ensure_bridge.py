@@ -10,10 +10,17 @@ Idempotent; safe to re-run.
 import json, os, re, shutil, subprocess, sys, time, venv
 
 BASE = os.path.expanduser("~/.local/share/herdr-zcode")
+OLD_BASE = os.path.expanduser("~/.local/share/qonnwolf-zcode-bridge")   # pre-rename runtime
 VENV = os.path.join(BASE, "venv")
 BIN = os.path.join(BASE, "bin")
 LOG = os.path.join(BASE, "last-ensure.log")
 NAR_SHA = "d65bd49755bf4f6637b3c103650175b1b789e3ae"   # verified runtime; upstream tag moved
+
+def _under(path, root):
+    """True if path is root or inside root — component boundary, not substring
+    (`/x/herdr-zcode-other` must not count as `/x/herdr-zcode`)."""
+    root = os.path.realpath(root)
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 NAR_PIN = ("native-agent-router @ git+https://github.com/BerineYang/"
            "native-agent-router.git@" + NAR_SHA)
 IS_WIN = os.name == "nt"
@@ -194,7 +201,7 @@ def path_launchers():
             body = f.read()
         if os.path.islink(dst):
             target = os.path.realpath(dst)
-            if BASE in target or "qonnwolf-zcode-bridge" in target:
+            if _under(target, BASE) or _under(target, OLD_BASE):
                 os.remove(dst)              # legacy install of ours: symlink -> real file
             else:
                 print(f"skip: {dst} is a foreign symlink (left untouched)")
@@ -206,7 +213,7 @@ def path_launchers():
                 installed.append(dst); continue
             # our own launcher from an earlier install (runtime renamed once):
             # refresh it so upgrades actually ship new launcher bodies
-            if "herdr-zcode" in cur or "qonnwolf-zcode-bridge" in cur:
+            if "herdr-zcode/env.sh" in cur or "qonnwolf-zcode-bridge/env.sh" in cur:
                 with open(dst, "w", newline="\n") as f:
                     f.write(body)
                 os.chmod(dst, 0o755)
@@ -225,31 +232,38 @@ def path_launchers():
             f.write("\n".join(installed) + "\n")
 
 def fix_windows_python3(py):
-    """Herdr panes spawn with bare `python3`; on Windows the WindowsApps alias
-    may be a silent stub. Point `python3.cmd` at the real interpreter and, if
-    the stub shadows it, remove the stub (it is a user-owned reparse point)."""
+    """Herdr panes spawn bare `python3` through CreateProcessW, which executes
+    .exe only — a python3.cmd shim never runs, and a bare copy of python.exe
+    loses its stdlib (stdlib is resolved relative to the exe). Install a copy
+    of the real interpreter as python3.exe PLUS a python3._pth path-config
+    (absolute stdlib paths) into WindowsApps, which is already on PATH. A
+    silent Store alias or broken leftover is replaced."""
     if not IS_WIN or not py:
         return
-    real = os.path.realpath(py)
     wa = os.path.join(os.environ.get("LOCALAPPDATA", ""),
                       "Microsoft", "WindowsApps")
     stub = os.path.join(wa, "python3.exe")
     try:
         if os.path.isfile(stub):
-            r = run([stub, "-c", "print(1)"])
+            r = run([stub, "-c", "import json; print(1)"])   # json proves stdlib
             if r.returncode == 0 and "1" in (r.stdout or ""):
-                return                       # a real interpreter; leave it
-            os.remove(stub)                  # silent Store alias: remove
-            print("removed silent python3.exe Store alias")
+                return                       # a working python3 already resolves
+            os.remove(stub)                  # silent/broken alias: replace
+            print("removed non-working python3.exe (Store alias or stdlib-less copy)")
     except OSError:
         pass
     try:
-        with open(os.path.join(wa, "python3.cmd"), "w") as f:
-            f.write("@echo off\r\n" + f'"{real}" %*\r\n')
-        print(f"python3 shim -> {real}")
+        shutil.copyfile(sys.executable, stub)
+        entries = [os.path.join(sys.prefix, "Lib"),
+                   os.path.join(sys.prefix, "DLLs"),
+                   os.path.join(sys.prefix, "Lib", "site-packages"),
+                   "import site"]
+        with open(os.path.join(wa, "python3._pth"), "w", newline="\r\n") as f:
+            f.write("\n".join(entries) + "\n")
+        print(f"python3 shim -> {stub} (stdlib at {sys.prefix})")
     except OSError as e:
-        print(f"WARN: could not install python3 shim ({e}); "
-              f"create python3.cmd pointing at {real} in a PATH dir",
+        print(f"WARN: could not install python3.exe shim ({e}); "
+              f"put a working python3.exe on PATH for herdr panes",
               file=sys.stderr)
 
 
