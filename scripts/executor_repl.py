@@ -22,8 +22,11 @@ from executor_common import (broker, build_kernel, report, remember_session,
 
 def _c(n): return f"\033[{n}m"
 DIM, BOLD, GREEN, RED, YEL, CYA, RST = _c(2), _c(1), _c(32), _c(31), _c(33), _c(36), _c(0)
-DEFAULT_WS = os.path.realpath(os.environ.get("QAB_DEFAULT_WORKSPACE",
-                                             os.path.expanduser("~/projects/qab-demo")))
+# Default workspace = the pane's own cwd (wherever this pane was opened; the
+# opener's workspace with `zcodecli open --workspace`). The caller's cwd rides
+# in every zcodecli-sent ticket anyway; this only covers bare text typed into
+# the pane. QAB_DEFAULT_WORKSPACE still pins it explicitly.
+DEFAULT_WS = os.path.realpath(os.environ.get("QAB_DEFAULT_WORKSPACE") or os.getcwd())
 DEFAULT_MODE = os.environ.get("QAB_DEFAULT_MODE", "yolo")
 DEFAULT_POLICY = os.environ.get("QAB_DEFAULT_POLICY", "allow")
 REQUIRE_VERIFY = os.environ.get("QAB_REQUIRE_VERIFY", "1") == "1"

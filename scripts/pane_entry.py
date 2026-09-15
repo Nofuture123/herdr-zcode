@@ -7,8 +7,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 def main():
-    os.environ.setdefault("QAB_DEFAULT_WORKSPACE",
-                          os.path.expanduser("~/projects/qab-demo"))
+    # No QAB_DEFAULT_WORKSPACE seeding: the executor's default workspace is the
+    # pane's own cwd (wherever this pane was opened), never a hardcoded demo dir.
     os.environ.setdefault("QAB_DEFAULT_MODE", "yolo")
     os.environ.setdefault("QAB_DEFAULT_POLICY", "allow")
     bootstrap = os.path.join(HERE, "ensure_bridge.py")
