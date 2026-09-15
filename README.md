@@ -17,9 +17,7 @@
 </div>
 
 ## 💡 Why herdr-zcode?
-
-Frontier LLMs (such as Claude 3.7 Sonnet, Claude Opus, and GPT-4o) excel at system-level architecture, deep context comprehension, and complex problem decomposition. However, using these expensive frontier models directly for **repetitive, low-level execution**—editing boilerplate code, running linters, iterating across failed unit tests, and parsing 500-line stack traces—introduces critical bottlenecks:
-
+Frontier reasoning models and orchestrators (such as Codex / GPT-5 series, Claude Sonnet/Opus, and DeepSeek series) excel at system-level architecture, deep context comprehension, and complex problem decomposition. However, using these expensive frontier models directly for **repetitive, low-level execution**—editing boilerplate code, running linters, iterating across failed unit tests, and parsing 500-line stack traces—introduces critical bottlenecks:
 1. **Token Cost Explosion**: Iterative trial-and-error runs burn through premium frontier model quotas at alarming rates.
 2. **Rate Limits & Budget Exhaustion**: Frequent tool calls quickly hit hourly or weekly token allowances in CLI tools like Claude Code.
 3. **Context Window Pollution**: Hundreds of lines of transient compiler warnings, test logs, and intermediate diffs clutter the orchestrator's context window, degrading subsequent reasoning and architectural choices.
