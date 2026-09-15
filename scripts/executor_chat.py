@@ -326,7 +326,7 @@ def main(kernel=None):
     W = 78
     c.out(f"{CYA}╭{'─'*(W-2)}╮{RST}")
     c.out(f"{CYA}│{RST} {BOLD}zcode chat{RST} · one ZCode session, this pane {DIM}(GLM-5.3-Flash · plugin {_plugin_version()}){RST}")
-    c.out(f"{CYA}│{RST} workspace {DIM}{c.ws}{RST}")
+    c.out(f"{CYA}│{RST} session-ws {DIM}{c.ws}{RST} {DIM}(all turns run here){RST}")
     c.out(f"{CYA}│{RST} mode {YEL}{MODE}{RST} · policy {YEL}{POLICY}{RST} · {DIM}/quit to end{RST}")
     c.out(f"{CYA}╰{'─'*(W-2)}╯{RST}")
     report("idle", force=True)
