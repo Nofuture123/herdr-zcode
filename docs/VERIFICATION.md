@@ -146,3 +146,32 @@ zcodecli result             # 打印最新任务结构化结果
 - ✅ 复审全项关闭：3-token 信号、证据严格一致、nonce 全分支回显、cancel_requested 非终态 busy 保持、未知/陈旧任务明确拒绝并提示、README/SKILL 一致化、run-tests.sh 真实退出码门。
 - ✅ 路由取消实测（sleep 任务）：cancel → cancel_requested（10s 诚实等待）→ kill → interrupted（终态）；进程确认停止；busy 全程真实。
 - ⚠️ 已知小项：client cancel 的结果扫描窗口已放宽至 35s；NAR 文件库对 running 任务的可见性有延迟（以执行器面板/结果文件为准）。
+
+## 发版门禁：多主控 × 多窗口分发矩阵（2026-09-15 起，强制）
+`scripts/e2e_dispatch.sh`——每个主控（CLI+模型）在自己的独立 herdr tab 里运行，自行
+`zcodecli chat-open` 开独立 chat pane（v0.7.3 workspace 定位），把一张 edit+verify 票
+派到独立 git 工作区；harness 只信磁盘证据（requests/results）+ notes.txt 实际内容裁决，
+任一主控 FAIL 整体 exit 1。完成判定以进程为准（pane run 回显会污染文本标记）。
+
+- 三主控基线（2026-09-15 20:27 实测，全 PASS）：
+
+  | 主控 | 派发 | 执行 | 全程 |
+  |---|---|---|---|
+  | codex gpt-5.6-luna(low) | 16s | 13s | 37s |
+  | claude sonnet | 8s | 25s | 37s |
+  | pi deepseek-v4.1-flash | 6s | 15s | 26s |
+
+- 延迟构成（同日微基准）：chat-open 0.1s；**send→回执 0.6s（纯传输+接受）**；执行
+  13–25s = ZCode 模型推理。dispatch 的大头是主控冷启动 + LLM 轮次——常驻热主控没有
+  这部分，0.6s 的传输层才是桥自身的延迟。
+- 用法：`E2E_MASTERS="codex,claude,pi" bash scripts/e2e_dispatch.sh [--timeout 600]
+  [--keep]`；`--dry-run` 只看计划。任何 FAIL → 不得发版（PUBLISHING.md 门禁）。
+- 失败分层：`delivery-failed`（投递失败/无回执/拒单 → 先怀疑 herdr core 输入黑洞或
+  fail-closed 拒单）、verify 失败（执行方或票面 verify 写错）、证据缺失（主控没走完
+  流程）——三种锅分属 herdr / 执行方 / 主控，先分层再排查。
+- 环境注记：codex 走 ChatGPT 账号周配额；pi 在 herdr 外直跑会打一条
+  pi-herdr-orchestrator 扩展报错（HERDR_ENV 门禁，无害噪音）。
+- 已知上游风险（2026-09-15）：herdr 0.8.2 core 存在「pane 输入黑洞」——存活中的 pane
+  会被静默停止转发输入（输出不受影响；rename/焦点切换/纯时间老化均排除，触发源未定，
+  无 pane.move 记录的 pane 也中过）。症状即 e2e 的 delivery-failed：`pane run`/
+  `send-text`/`send-keys` 全部无声丢失。绕行：重开面板。e2e FAIL 时先区分这一层。

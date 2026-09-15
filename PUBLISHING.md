@@ -19,6 +19,16 @@ gh repo edit Nofuture123/herdr-zcode --add-topic herdr-plugin
 登录校验读 `~/.zcode/v2/credentials.json` 的 `oauth:*:access_token` 键（provider 段可能是 zai/bigmodel），
 未登录即中止安装并给出 `zcode login` 三步指引。
 
+## 发布前门禁（强制）
+
+```bash
+sh scripts/run-tests.sh                                      # 单元门禁:全绿才继续
+E2E_MASTERS="codex,claude,pi" bash scripts/e2e_dispatch.sh   # 多主控多窗口真机矩阵
+```
+
+e2e 任一主控 FAIL（投递失败 / verify 不过 / 证据缺失）不得发版。分段计时、基线与
+失败分层（herdr core / 桥 / 主控）见 docs/VERIFICATION.md「发版门禁」一节。
+
 ## 发布后验证
 
 1. 等待索引刷新(最多 30 分钟),然后到 https://herdr.dev/plugins/ 搜索 "zcode"。
