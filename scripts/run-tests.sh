@@ -16,8 +16,11 @@ print("manifest entries ok")
 PY
 echo "== python compile =="; python3 -m py_compile scripts/*.py
 echo "== unit tests =="
-# hermetic gate: color env must never flip results (executor_common decides at import)
-if env -u NO_COLOR -u QAB_EXEC_PLAIN python3 -m unittest discover -s tests -v > /tmp/zcodecli-ut.log 2>&1; then
+# hermetic gate: color env must never flip results (executor_common decides at
+# import); HERDR_* would flip broker behavior when run from inside a herdr pane
+if env -u NO_COLOR -u QAB_EXEC_PLAIN -u HERDR_ENV -u HERDR_PANE_ID \
+       -u HERDR_SOCKET_PATH -u HERDR_WORKSPACE_ID \
+   python3 -m unittest discover -s tests -v > /tmp/zcodecli-ut.log 2>&1; then
   tail -3 /tmp/zcodecli-ut.log
 else
   rc=$?

@@ -212,8 +212,12 @@ def path_launchers():
             if cur == body:
                 installed.append(dst); continue
             # our own launcher from an earlier install (runtime renamed once):
-            # refresh it so upgrades actually ship new launcher bodies
-            if "herdr-zcode/env.sh" in cur or "qonnwolf-zcode-bridge/env.sh" in cur:
+            # refresh it so upgrades actually ship new launcher bodies. The
+            # full env.sh reference is the launcher fingerprint — a foreign
+            # script merely CONTAINING the runtime name must never match.
+            ours = ('"$HOME/.local/share/herdr-zcode/env.sh"' in cur
+                    or '"$HOME/.local/share/qonnwolf-zcode-bridge/env.sh"' in cur)
+            if ours:
                 with open(dst, "w", newline="\n") as f:
                     f.write(body)
                 os.chmod(dst, 0o755)

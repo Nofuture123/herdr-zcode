@@ -166,7 +166,9 @@ class Chat:
             for attempt in range(12):
                 self.run_turn(json.dumps(spec, ensure_ascii=False),
                               require_verify=False, drain_input=drain_input)
-                res = self.last_result or {}
+                res = self.last_result
+                if res is None:
+                    return   # submitted and in flight (or taken over): no retry
                 if not (res.get("status") == "failed"
                         and "workspace_busy" in str(res.get("error") or "")):
                     return
@@ -178,6 +180,9 @@ class Chat:
                 time.sleep(0.5)
 
     def run_turn(self, line, require_verify=True, drain_input=True):
+        # a submitted-but-running turn has no verdict yet — clearing first stops
+        # the steer retry loop from re-reading the previous attempt's verdict
+        self.last_result = None
         rid = broker.new_request_id()
         try:
             if line.startswith("{"):
@@ -280,7 +285,7 @@ class Chat:
         if line:
             self.out(line)
         if getattr(self, "_tail", None): self._tail.set()
-        self._launch_pending_steer_turn(tid)
+        self._launch_pending_steer_turn(tid, drain_input=drain_input)
         if self.busy == tid: self.busy = None
         if not self.busy: report("idle")
 

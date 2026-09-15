@@ -15,15 +15,21 @@ def load(name, path):
 
 broker = load("broker", os.path.join(ROOT, "scripts", "broker.py"))
 broker.REQUESTS = os.path.join(tmp, "requests"); broker.LEDGERS = os.path.join(tmp, "ledgers")
-broker.RESULTS = os.path.join(tmp, "results"); broker.init_dirs()
+broker.RESULTS = os.path.join(tmp, "results"); broker.OWNERS = os.path.join(tmp, "owners")
+broker.RECEIPTS = os.path.join(tmp, "receipts"); broker.init_dirs()
+# OWNERS must be redirected too: it is cross-machine state (a test run inside a
+# herdr pane once recorded real pane ids here and poisoned later cancel tests)
 # executor_common decides color at import time; keep the suite hermetic against
 # ambient NO_COLOR/QAB_EXEC_PLAIN (a NO_COLOR env once failed the gate only in
-# other agents' shells)
-for _k in ("NO_COLOR", "QAB_EXEC_PLAIN"):
+# other agents' shells). HERDR_* likewise flips broker behavior (owner checks,
+# socket reporting) when the gate runs from inside a herdr pane.
+for _k in ("NO_COLOR", "QAB_EXEC_PLAIN", "HERDR_ENV", "HERDR_PANE_ID",
+           "HERDR_SOCKET_PATH", "HERDR_WORKSPACE_ID"):
     os.environ.pop(_k, None)
 # executor_common loads its own broker copy; point it at the same redirected dirs
 ec = load("executor_common", os.path.join(ROOT, "scripts", "executor_common.py"))
 ec.broker.REQUESTS, ec.broker.LEDGERS, ec.broker.RESULTS = broker.REQUESTS, broker.LEDGERS, broker.RESULTS
+ec.broker.OWNERS, ec.broker.RECEIPTS = broker.OWNERS, broker.RECEIPTS
 er = load("executor_repl", os.path.join(ROOT, "scripts", "executor_repl.py"))
 echat = load("executor_chat", os.path.join(ROOT, "scripts", "executor_chat.py"))
 
@@ -459,6 +465,32 @@ class TestChatSteer(unittest.TestCase):
         self.assertEqual(k.submits[1]["goal"], "switch to v2 design")
         self.assertEqual(k.submits[1].get("session_ref"), "t-000001")
         self.assertIn("retry", buf.getvalue())
+
+    def test_steer_retry_stops_when_relaunch_in_flight(self):
+        # a relaunch that SUBMITTED (turn running/backgrounded) has no verdict;
+        # the loop must not re-read the previous attempt's workspace_busy
+        k, buf, c = self.make()
+        calls = []
+        def fake_run(line, require_verify=True, drain_input=True):
+            calls.append(line)
+            c.last_result = ({"status": "failed", "error": "workspace_busy: lock"}
+                             if len(calls) == 1 else None)
+        c.run_turn = fake_run
+        c.pending_steer = "v2"
+        c.active_spec = {"goal": "v1", "workspace": WS}
+        c._launch_pending_steer_turn("t-000001")
+        self.assertEqual(len(calls), 2)   # busy once -> one retry; None -> stop
+
+    def test_relaunch_passes_drain_input_through(self):
+        k, buf, c = self.make()
+        captured = {}
+        def fake_run(line, require_verify=True, drain_input=True):
+            captured["drain"] = drain_input
+        c.run_turn = fake_run
+        c.pending_steer = "x"
+        c.active_spec = {"goal": "v1"}
+        c._launch_pending_steer_turn("t-000001", drain_input=False)
+        self.assertFalse(captured["drain"])   # chained relaunches keep stdin policy
 
     def test_do_steer_with_no_running_task(self):
         k, buf, c = self.make()
