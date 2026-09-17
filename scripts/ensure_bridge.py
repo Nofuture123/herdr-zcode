@@ -128,6 +128,44 @@ def ensure_venv(py, node_bin, zcode_bin):
     shutil.rmtree(VENV + ".old", ignore_errors=True)
     fix_venv_paths()
     print("install: ok (atomic switch complete)")
+    patch_zcode_protocol(VENV)
+
+def patch_zcode_protocol(venv_dir):
+    """ZCode 0.16.5 app-server (Sep 2026 auto-update) rejects runtimeModel in
+    session/create with -32602 Unrecognized key; NAR is unmaintained upstream
+    (d65bd49 is HEAD). The worker CLI carries its own provider config (via
+    ZCODE_BUILTIN_PROVIDER_CONFIG_FILE) and login state, so NAR's legacy
+    runtimeModel workaround (it embedded the apiKey) is dead weight: drop the
+    key, keep the include_model branch. Idempotent; reapplied on every run.
+
+    GATED on the new packaging layout: only when the relocated bundled config
+    (Resources/config/provider/zcode-builtin.json) exists. On a rolled-back
+    pre-update ZCode the patch is a no-op — the old protocol NEEDS
+    runtimeModel (without it resume fails -32031)."""
+    import glob as _g
+    if not os.path.exists(os.path.join(
+            os.path.dirname(os.path.dirname(
+                (json.load(open(os.path.join(BASE, "env.json"))).get("zcode_bin"))
+                if os.path.exists(os.path.join(BASE, "env.json")) else "")
+            or ""), "config", "provider", "zcode-builtin.json")):
+        return   # old-layout (or unknown) ZCode: keep NAR stock protocol
+    target = os.path.join(venv_dir, "Lib" if IS_WIN else "lib")
+    hits = _g.glob(os.path.join(target, "**", "native_agent_router",
+                                "adapters", "zcode_native.py"), recursive=True)
+    old = ('        if self.runtime_model is not None:\n'
+           '            base["runtimeModel"] = self.runtime_model\n')
+    new = ('        if self.runtime_model is not None:\n'
+           '            # runtimeModel dropped: rejected by zcode >=0.16.5 app-server\n')
+    for fp in hits:
+        try:
+            with open(fp) as f:
+                body = f.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if old in body:
+            with open(fp, "w") as f:
+                f.write(body.replace(old, new, 1))
+            print(f"patched: session/create runtimeModel removed ({fp})")
 
 def fix_venv_paths():
     """After the atomic switch (venv.new -> venv) rewrite build-time paths that

@@ -474,6 +474,10 @@ def cmd_list(a):
     if not os.path.exists(NAR):
         print("bridge not installed; run ensure-bridge.sh first", file=sys.stderr); return 2
     p = subprocess.run([NAR, "list"], capture_output=True, text=True)
+    if getattr(a, "machine", False):
+        # MCP bridge consumes this: raw nar JSON, untouched
+        print(p.stdout.strip() or "[]")
+        return p.returncode
     try: tasks = json.loads(p.stdout)
     except Exception: print(p.stdout or p.stderr); return p.returncode
     tasks.sort(key=lambda t: t.get("created_at",""))
@@ -572,7 +576,7 @@ s = sub.add_parser("read"); s.add_argument("--lines", type=int, default=40); s.s
 s = sub.add_parser("close"); s.set_defaults(fn=cmd_close)
 s = sub.add_parser("chat"); s.add_argument("--workspace", default=None); s.set_defaults(fn=cmd_chat)
 s = sub.add_parser("wait"); s.add_argument("text"); s.add_argument("--timeout", type=int, default=60000); s.set_defaults(fn=cmd_wait)
-s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_list)
+s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.add_argument("--machine", action="store_true"); s.set_defaults(fn=cmd_list)
 s = sub.add_parser("inspect"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_nar_inspect)
 s = sub.add_parser("cancel"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_cancel)
 s = sub.add_parser("open-session"); s.add_argument("task_id"); s.add_argument("--print", action="store_true"); s.set_defaults(fn=cmd_open_session)

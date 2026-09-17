@@ -32,6 +32,17 @@ def main():
         argv = [node, bin_]
     else:
         argv = [bin_]
+    # ZCode.app auto-updates relocate the bundled provider config (now
+    # Resources/config/provider/zcode-builtin.json) while the CLI resolves it
+    # next to the .cjs and dies with 无法定位 CLI ZCode Built-in Provider
+    # Config. Point it at the real file explicitly.
+    if not os.environ.get("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"):
+        res = os.path.dirname(os.path.dirname(bin_)) if bin_ else ""
+        for cand in (os.path.join(res, "config", "provider", "zcode-builtin.json") if res else "",
+                     os.path.join(os.path.dirname(bin_ or ""), "provider", "zcode-builtin.json")):
+            if cand and os.path.isfile(cand):
+                os.environ["ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"] = cand
+                break
     if os.name != "nt" and hasattr(os, "execv"):
         return os.execv(argv[0], argv)
     # Windows: execv would tear down the ConPTY (see pane_entry) — wait instead

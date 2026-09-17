@@ -43,6 +43,19 @@ def main():
         missing = [d for d in prepend if d not in parts]
         if missing:
             os.environ["PATH"] = sep.join(missing) + sep + cur
+        # ZCode.app auto-updates relocate the bundled provider config (now
+        # Resources/config/provider/zcode-builtin.json) while the spawned CLI
+        # resolves it next to the .cjs and dies with 无法定位 CLI ZCode
+        # Built-in Provider Config → ProcessDied on every submit. Export the
+        # real file so NAR's app-server workers inherit it.
+        if not os.environ.get("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE") and saved.get("zcode_bin"):
+            zres = os.path.dirname(os.path.dirname(saved["zcode_bin"]))
+            zdir = os.path.dirname(saved["zcode_bin"])
+            for cand in (os.path.join(zres, "config", "provider", "zcode-builtin.json"),
+                         os.path.join(zdir, "provider", "zcode-builtin.json")):
+                if os.path.isfile(cand):
+                    os.environ["ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"] = cand
+                    break
     except Exception:
         pass
     script = os.path.join(HERE, "executor_repl.py")

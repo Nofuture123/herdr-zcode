@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(test:*)",
+      "Shell(herdr:*)",
+      "Shell(for:*)",
+      "Shell(do:*)",
+      "Shell(python3 -c  import sys,json d=json.load(sys.stdin)['result'] for p in d.get('panes',[]): print(p.get('pane_id'), '|', p.get('label'), '|', p.get('agent') or p.get('title') or '', '|', p.get('agent_status'))  2 > /dev/null)",
+      "Shell(done:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}
