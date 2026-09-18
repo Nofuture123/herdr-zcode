@@ -182,6 +182,13 @@ def patch_zcode_protocol(venv_dir):
                   '            except Exception:\n'
                   '                pass\n'
                   '        self._subscribe(sid)')
+    # (always) cli/config.json first in NAR's config discovery: the desktop
+    # rewrites v2/config.json with its own model selection, which is not valid
+    # for spawned headless servers and resurrects the Unsupported-model bug.
+    cand_old = ('    candidates += [Path.home() / ".zcode" / "v2" / "config.json",\n'
+                '                   Path.home() / ".zcode" / "cli" / "config.json"]')
+    cand_new = ('    candidates += [Path.home() / ".zcode" / "cli" / "config.json",\n'
+                '                   Path.home() / ".zcode" / "v2" / "config.json"]')
     for fp in hits:
         try:
             with open(fp) as f:
@@ -189,6 +196,8 @@ def patch_zcode_protocol(venv_dir):
         except (OSError, UnicodeDecodeError):
             continue
         changed = False
+        if cand_old in body:
+            body = body.replace(cand_old, cand_new, 1); changed = True
         if old_create in body:
             body = body.replace(old_create, new_create, 1); changed = True
         if zcode_is_new_layout():
