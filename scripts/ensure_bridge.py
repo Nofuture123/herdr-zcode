@@ -130,6 +130,23 @@ def ensure_venv(py, node_bin, zcode_bin):
     print("install: ok (atomic switch complete)")
     patch_zcode_protocol(VENV)
 
+def warn_if_broken_zcode(zcode_bin, log):
+    """ZCode 3.12.x desktop builds (0.16.5 rebuild, Sep 2026 auto-update)
+    relocated the bundled provider config AND broke headless model creation
+    entirely — every bridge ticket fails with `Model creation failed /
+    Select a model before continuing`, even via the official `zcode --prompt`
+    (upstream regression; desktop interactive is unaffected). 3.10.2 desktop
+    builds are verified working. Detected via the relocated config marker;
+    see docs/ZCODE-COMPAT.md for the rollback procedure."""
+    if not zcode_bin:
+        return
+    marker = os.path.join(os.path.dirname(os.path.dirname(zcode_bin)),
+                          "config", "provider", "zcode-builtin.json")
+    if os.path.exists(marker):
+        log("[!] KNOWN-BROKEN ZCode build (3.12.x-era headless): ticket execution "
+            "will fail with `Model creation failed`.")
+        log("[!]   Roll back to the 3.10.2 desktop build — see docs/ZCODE-COMPAT.md.")
+
 def patch_zcode_protocol(venv_dir):
     """ZCode 0.16.5 app-server (Sep 2026 auto-update) rejects runtimeModel in
     session/create with -32602 Unrecognized key; NAR is unmaintained upstream
@@ -370,6 +387,7 @@ def main():
     if r.returncode != 0 or any(l.startswith("[X]") for l in (r.stdout or "").splitlines()):
         fail("doctor FAILED", f"see {out_path}")
     log("doctor: ok")
+    warn_if_broken_zcode(zcode, log)
     with open(LOG, "w") as f:
         f.write("\n".join(lines) + "\n")
     print("✓ [zcode-bridge] bootstrap ok")
