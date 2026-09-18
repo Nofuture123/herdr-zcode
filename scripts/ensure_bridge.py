@@ -148,41 +148,67 @@ def warn_if_broken_zcode(zcode_bin, log):
         log("[!]   Roll back to the 3.10.2 desktop build — see docs/ZCODE-COMPAT.md.")
 
 def patch_zcode_protocol(venv_dir):
-    """ZCode 0.16.5 app-server (Sep 2026 auto-update) rejects runtimeModel in
-    session/create with -32602 Unrecognized key; NAR is unmaintained upstream
-    (d65bd49 is HEAD). The worker CLI carries its own provider config (via
-    ZCODE_BUILTIN_PROVIDER_CONFIG_FILE) and login state, so NAR's legacy
-    runtimeModel workaround (it embedded the apiKey) is dead weight: drop the
-    key, keep the include_model branch. Idempotent; reapplied on every run.
+    """ZCode 0.16.5-era protocol adaptations for spawned headless app-servers
+    (verified live on the 3.10.2 desktop build):
 
-    GATED on the new packaging layout: only when the relocated bundled config
-    (Resources/config/provider/zcode-builtin.json) exists. On a rolled-back
-    pre-update ZCode the patch is a no-op — the old protocol NEEDS
-    runtimeModel (without it resume fails -32031)."""
+    1. (always) After session/create, pin the model via session/setModel.
+       New sessions restore the workspace's PERSISTED model selection, which
+       may be a stale id the server no longer offers → turn fails with
+       `Unsupported model: …`. Non-fatal: older builds apply runtimeModel
+       from create and need no setModel.
+    2. (gated) On 3.12.x-era layouts (Resources/config/provider/zcode-builtin
+       .json exists) strip `runtimeModel` from session/create — that build
+       rejects it. NOTE: 3.12.x headless model creation is broken upstream
+       regardless (Model creation failed); rollback to 3.10.2 instead.
+    Idempotent; reapplied on every run."""
     import glob as _g
-    if not os.path.exists(os.path.join(
-            os.path.dirname(os.path.dirname(
-                (json.load(open(os.path.join(BASE, "env.json"))).get("zcode_bin"))
-                if os.path.exists(os.path.join(BASE, "env.json")) else "")
-            or ""), "config", "provider", "zcode-builtin.json")):
-        return   # old-layout (or unknown) ZCode: keep NAR stock protocol
     target = os.path.join(venv_dir, "Lib" if IS_WIN else "lib")
     hits = _g.glob(os.path.join(target, "**", "native_agent_router",
                                 "adapters", "zcode_native.py"), recursive=True)
-    old = ('        if self.runtime_model is not None:\n'
-           '            base["runtimeModel"] = self.runtime_model\n')
-    new = ('        if self.runtime_model is not None:\n'
-           '            # runtimeModel dropped: rejected by zcode >=0.16.5 app-server\n')
+    old_create = ('        sid = (r.get("session") or {}).get("sessionId")\n'
+                  '        if not sid:\n'
+                  '            raise AdapterError(f"session/create returned no sessionId: {r}")\n'
+                  '        self._subscribe(sid)')
+    new_create = ('        sid = (r.get("session") or {}).get("sessionId")\n'
+                  '        if not sid:\n'
+                  '            raise AdapterError(f"session/create returned no sessionId: {r}")\n'
+                  '        if self.runtime_model is not None:\n'
+                  '            try:\n'
+                  '                self.rpc.request("session/setModel", {\n'
+                  '                    "sessionId": sid,\n'
+                  '                    "model": {"providerId": self.runtime_model["model"]["providerId"],\n'
+                  '                              "modelId": self.runtime_model["model"]["modelId"]},\n'
+                  '                }, timeout=30)\n'
+                  '            except Exception:\n'
+                  '                pass\n'
+                  '        self._subscribe(sid)')
     for fp in hits:
         try:
             with open(fp) as f:
                 body = f.read()
         except (OSError, UnicodeDecodeError):
             continue
-        if old in body:
+        changed = False
+        if old_create in body:
+            body = body.replace(old_create, new_create, 1); changed = True
+        if zcode_is_new_layout():
+            rm = ('            base["runtimeModel"] = self.runtime_model\n')
+            if rm in body:
+                body = body.replace(rm, '', 1); changed = True
+        if changed:
             with open(fp, "w") as f:
-                f.write(body.replace(old, new, 1))
-            print(f"patched: session/create runtimeModel removed ({fp})")
+                f.write(body)
+            print(f"patched: zcode protocol adaptations ({fp})")
+
+def zcode_is_new_layout():
+    """3.12.x-era builds relocate the bundled provider config."""
+    try:
+        zcode_bin = json.load(open(os.path.join(BASE, "env.json"))).get("zcode_bin") or ""
+    except Exception:
+        zcode_bin = ""
+    return os.path.exists(os.path.join(os.path.dirname(os.path.dirname(zcode_bin)),
+                          "config", "provider", "zcode-builtin.json"))
+
 
 def fix_venv_paths():
     """After the atomic switch (venv.new -> venv) rewrite build-time paths that
