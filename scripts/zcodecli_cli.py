@@ -539,6 +539,21 @@ def cmd_cancel(a):
             print(l.strip()); return 1
     print((out2 or "no cancel outcome within 35s").strip(), file=sys.stderr); return 1
 
+def cmd_kill(a):
+    """Force-terminate a stuck task and RELEASE its workspace lock (nar kill).
+    For cancel-unresponsive tasks only — cancel is always tried first."""
+    if not a.nar_args:
+        print("usage: zcodecli kill <task_id>", file=sys.stderr); return 2
+    if not os.path.exists(NAR):
+        print("bridge not installed; run ensure-bridge first", file=sys.stderr); return 2
+    p = subprocess.run([NAR, "kill", *a.nar_args, "--yes"], capture_output=True, text=True)
+    try:
+        d = json.loads(p.stdout)
+        print(f"{d.get('task_id')}: killed={d.get('killed')} status={d.get('status')}")
+        return 0 if d.get("killed") else 1
+    except Exception:
+        print((p.stdout or p.stderr).strip()); return p.returncode or 1
+
 def cmd_steer(a):
     """Redirect the running task: cancel + resubmit in the SAME native session."""
     text = a.text.strip()
@@ -579,6 +594,7 @@ s = sub.add_parser("wait"); s.add_argument("text"); s.add_argument("--timeout", 
 s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.add_argument("--machine", action="store_true"); s.set_defaults(fn=cmd_list)
 s = sub.add_parser("inspect"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_nar_inspect)
 s = sub.add_parser("cancel"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_cancel)
+s = sub.add_parser("kill"); s.add_argument("nar_args", nargs="*"); s.set_defaults(fn=cmd_kill)
 s = sub.add_parser("open-session"); s.add_argument("task_id"); s.add_argument("--print", action="store_true"); s.set_defaults(fn=cmd_open_session)
 s = sub.add_parser("steer"); s.add_argument("text"); s.set_defaults(fn=cmd_steer)
 a = p.parse_args()

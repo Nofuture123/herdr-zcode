@@ -85,6 +85,18 @@
   建模本身已坏;桥的 `ensure_bridge patch_zcode_protocol` 按**新布局存在与否**条件生效,
   回滚到 3.10.2 后自动 no-op,保持 stock 协议。
 
+## 卡死任务自救:`zcodecli kill`
+
+任务跑超 600s 会进入 NAR 的 **blocked 看护模式**:锁保持、原生会话继续跑、任务标记
+`blocked`。此时:
+
+- `zcodecli cancel <task_id>` —— 温和取消:通知原生停止,**确认停止后锁才释放**;
+  若原生会话已无法响应(如进程已死/建模失败时代),cancel 无法确认,锁继续被看护持有;
+- `zcodecli kill <task_id>` —— **强制终止 + 立即释放 workspace 锁**(stock NAR 自带,
+  等价于文档说的 "never blindly resubmit" 的人工兜底)。专给 cancel 无响应的卡死任务。
+
+`kill` 后该 workspace 立即可派新票;原生侧遗留状态由 NAR 在下次 reconcile 清理。
+
 ## 派票失败的分层排查(速查)
 
 1. `zcodecli list --machine` 正常、票报 `Model creation failed` → 本文档场景(查 ZCode 版本);
