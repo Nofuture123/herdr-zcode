@@ -270,6 +270,7 @@ def cmd_send(a):
             broker.save_request(env["request_id"], env)
         except Exception:
             pass   # 磁盘通道不可用:面板快路径仍在线上
+    rid = env.get("request_id") if isinstance(env, dict) else None
     rc, stdout, stderr = herdr(["pane", "run", pid, text])
     if rc != 0 and "pane_not_found" in (stderr or "") and not getattr(a, "pane", None):
         pid = auto_open_executor()          # targeted pane was closed; self-heal
@@ -287,10 +288,21 @@ def cmd_send(a):
     deadline = t0 + 15
     receipt = None
     marks = []
+    def _rid_task():
+        # request 文件出现 task_id = 执行器已接收该票(比收据更早的可靠信号)
+        try:
+            return (broker.load_request(rid).get("task_id") or "") if rid else ""
+        except Exception:
+            return ""
     while time.time() < deadline:
         receipt = broker.load_receipt(nonce)
         if receipt:
             break
+        if rid and _rid_task():
+            tid = _rid_task()
+            print(f"accepted: {rid} {tid} queued")
+            return 0
+        time.sleep(0.5)
         # v0.3.2+ executors answer on disk within ~1s; only fall back to pane
         # heuristics after giving the receipt a fair chance
         if time.time() - t0 >= 3:
@@ -327,6 +339,16 @@ def cmd_send(a):
         print(receipt.get("error", "rejected"), file=sys.stderr)
         return 5
     if not marks:
+        if rid:
+            rec = None
+            try: rec = broker.load_request(rid)
+            except Exception: pass
+            tid = (rec or {}).get("task_id") or "-"
+            if tid != "-":
+                print(f"accepted: {rid} {tid} queued (executor busy; result --request {rid})")
+                return 0
+            print(f"queued on disk: {rid} (将executor空闲后自动执行; result --request {rid})")
+            return 0
         print("no receipt within 15s (task may still be queued; re-check with "
               f"zcodecli --pane {pid} read)", file=sys.stderr)
         return 4
@@ -402,7 +424,11 @@ def cmd_result(a):
         if terminal:
             break
         if time.time() > deadline:
-            print("no terminal result within timeout", file=sys.stderr)
+            if getattr(a, "machine", False):
+                print(json.dumps({"ok": False, "error": "no terminal result within timeout",
+                                  "timeout_ms": a.timeout, "hint": "task may still be running (long tasks enter blocked-watcher); retry with a longer --timeout"}))
+            else:
+                print("no terminal result within timeout", file=sys.stderr)
             return 1
         time.sleep(0.5)
 
@@ -481,12 +507,22 @@ def cmd_list(a):
     try: tasks = json.loads(p.stdout)
     except Exception: print(p.stdout or p.stderr); return p.returncode
     tasks.sort(key=lambda t: t.get("created_at",""))
-    print(f"{BOLD}  {'STATUS':<18}{'TASK':<16}{'TIME':<7}{'GOAL':<34}{RST}")
+    keys = {}
+    try:
+        for f in os.listdir(broker.REQUESTS):
+            if not f.endswith(".json"): continue
+            try:
+                r = json.load(open(os.path.join(broker.REQUESTS, f)))
+                tid, k = r.get("task_id"), (r.get("spec") or {}).get("idempotency_key")
+                if tid and k: keys[tid] = k
+            except Exception: pass
+    except OSError: pass
+    print(f"{BOLD}  {'STATUS':<18}{'TASK':<16}{'TIME':<7}{'KEY':<12}{'GOAL':<30}{RST}")
     print(f"{DIM}  {'─'*18}{'─'*16}{'─'*7}{'─'*34}{RST}")
     for t in tasks:
         st=t.get("status","?"); tid=t.get("task_id","?"); ts=t.get("created_at","")[11:19]
         c=SC.get(st,DIM)
-        print(f"  {c}●{RST} {c}{st:<16}{RST} {DIM}{tid:<16}{RST} {ts}  {trunc(t.get('goal',''),33)}")
+        print(f"  {c}●{RST} {c}{st:<16}{RST} {DIM}{tid:<16}{RST} {DIM}{keys.get(tid,''):<12}{RST}{trunc(t.get('goal',''),30)}")
     print(f"{DIM}  {len(tasks)} task(s) · lock: serial per workspace (abspath; "
           f"parallel tickets need distinct paths/worktrees){RST}")
     return 0
@@ -525,7 +561,7 @@ def cmd_cancel(a):
     rc, stdout, stderr = herdr(["pane", "run", pid, f"/cancel {tid}"])
     if rc != 0: print((stderr or stdout).strip(), file=sys.stderr); return rc
     rc2, out2, _ = herdr(["pane", "wait-output", "--regex",
-                          "already_terminal|cancel_requested|cancelled \\(confirmed|interrupted|not known to this executor|owned by pane",
+                          "already_terminal|already terminal|cancel_requested|cancelled \\(confirmed|interrupted|not known to this executor|owned by pane",
                           "--timeout", "35000", pid], timeout=40)
     rc3, out3, _ = herdr(["pane", "read", pid, "--source", "visible", "--lines", "40"])
     for l in (out3 or "").splitlines()[::-1]:
@@ -569,7 +605,20 @@ def cmd_steer(a):
     return 0
 
 
+def _plugin_version():
+    for cand in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "herdr-plugin.toml"),
+                 os.path.join(os.path.expanduser("~/.local/share/herdr-zcode"), "env.json")):
+        try:
+            if cand.endswith(".json"):
+                return json.load(open(cand)).get("version") or "dev"
+            for line in open(cand):
+                if line.startswith("version"):
+                    return line.split("=", 1)[1].strip().strip('"')
+        except Exception:
+            continue
+    return "dev"
 p = argparse.ArgumentParser(prog="zcodecli")
+p.add_argument("--version", action="version", version=f"zcodecli {_plugin_version()}")
 p.add_argument("--pane", default=None, help="target a specific executor/chat pane id (default: the zcode-bridge reception pane)")
 sub = p.add_subparsers(dest="cmd")
 s = sub.add_parser("open"); s.add_argument("--placement", default="tab", choices=["tab", "split", "overlay", "zoomed"]); s.add_argument("--workspace", default=None, help="workspace ID (e.g. w7Y); a path is used as --cwd"); s.add_argument("--herdr-workspace", default=None, help="herdr workspace ID (e.g. w7Y); default: $HERDR_WORKSPACE_ID"); s.set_defaults(fn=cmd_open)

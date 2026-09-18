@@ -34,7 +34,13 @@ def build_kernel():
     from native_agent_router.config import load_config
     from native_agent_router.kernel.kernel import Kernel
     from native_agent_router.kernel.store import TaskStore
-    return Kernel(load_config(None), TaskStore())
+    cfg = load_config(None)
+    # Verify strings are authored by the DISPATCHER (master), not the worker —
+    # compound shell commands (`pnpm check && npx vitest …`) are the documented
+    # norm. NAR's default argv-split silently mangles them into false greens
+    # (biome eats "&&" as a path, exits 0, nothing ran), so shell is enabled.
+    cfg.settings["verify_allow_shell"] = True
+    return Kernel(cfg, TaskStore())
 
 # ---------- herdr agent-state (socket protocol, best-effort) ----------
 H_ENV = os.environ.get("HERDR_ENV")
@@ -215,6 +221,10 @@ def start_disk_pickup(q, pane_id, busy_fn):
                     st = broker.claim_request(rid, pane_id)
                     if st == "new":
                         seen.add(rid)
+                        # claim 即回执:等待方立刻知道票已被接收排队,
+                        # 而不是干等 15s 后误判丢失(或双头重派)
+                        receipt_ok(spec.get("nonce"), request_id=rid,
+                                   task_id="-", status="queued (disk)")
                         q.put(json.dumps(spec, ensure_ascii=False) + "\n")
                     elif st == "mine":
                         seen.add(rid)
