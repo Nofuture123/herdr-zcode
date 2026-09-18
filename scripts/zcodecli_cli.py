@@ -362,9 +362,32 @@ def cmd_send(a):
 def cmd_close(a):
     pid = resolve_pane(getattr(a, "pane", None))
     if not pid: print("executor pane not running (nothing to close)"); return 0
+    inflight = []
+    try:
+        for f in os.listdir(broker.REQUESTS):
+            if not f.endswith(".json"): continue
+            try:
+                rec = json.load(open(os.path.join(broker.REQUESTS, f)))
+            except Exception: continue
+            tid = rec.get("task_id")
+            if not tid or not broker.TASK_RE.match(tid): continue
+            import glob as _g
+            store = os.path.expanduser(f"~/.native-agent-router/tasks/{tid}.json")
+            if os.path.exists(store):
+                try:
+                    st = json.load(open(store)).get("status")
+                    if st in ("running", "blocked", "queued", "cancel_requested"):
+                        inflight.append((tid, st))
+                except Exception: pass
+    except OSError: pass
+    if inflight and a.yes is not True and "--yes" not in sys.argv:
+        print("in-flight task(s) will be orphaned by closing:")
+        for tid, st in inflight:
+            print(f"  {tid}  {st}  (result --request 后可查; 重启后自动 reconcile 为 interrupted)")
+        return 3   # 明确退出码:有在途任务被拒绝关闭
     rc, stdout, stderr = herdr(["pane", "close", pid])
     print(f"closed executor pane {pid}"); print((stderr or "").strip())
-    print("note: in-flight task becomes orphaned (report as interrupted); completed history persists")
+    print("note: in-flight task becomes orphaned (reconciled to interrupted on next boot)")
     return rc
 
 def cmd_read(a):
@@ -637,7 +660,7 @@ s = sub.add_parser("result"); s.add_argument("--request", default=None,
                    help="wait for the result of THIS request_id"); s.add_argument("--machine", action="store_true")
 s.add_argument("--timeout", type=int, default=300000); s.set_defaults(fn=cmd_result)
 s = sub.add_parser("read"); s.add_argument("--lines", type=int, default=40); s.set_defaults(fn=cmd_read)
-s = sub.add_parser("close"); s.set_defaults(fn=cmd_close)
+s = sub.add_parser("close"); s.add_argument("--yes", action="store_true", help="skip the in-flight warning"); s.set_defaults(fn=cmd_close)
 s = sub.add_parser("chat"); s.add_argument("--workspace", default=None); s.set_defaults(fn=cmd_chat)
 s = sub.add_parser("wait"); s.add_argument("text"); s.add_argument("--timeout", type=int, default=60000); s.set_defaults(fn=cmd_wait)
 s = sub.add_parser("list"); s.add_argument("nar_args", nargs="*"); s.add_argument("--machine", action="store_true"); s.set_defaults(fn=cmd_list)

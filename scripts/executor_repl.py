@@ -435,6 +435,23 @@ def main(kernel=None):
         r.q.put(None)
     threading.Thread(target=reader, daemon=True).start()
     start_disk_pickup(r.q, r.pane_id or "repl", lambda: r.busy is not None)
+    # 重启/崩溃后,把 owner 已死的 running 任务标成 interrupted(诚实状态),
+    # 否则 inspect 永远返回过期状态,调用方无法区分「在跑」和「owner 已死」
+    def _reconcile_orphans():
+        import glob as _g, json as _json
+        store_dir = os.path.expanduser("~/.native-agent-router/tasks")
+        for f in _g.glob(os.path.join(store_dir, "t-*.json")):
+            try:
+                d = _json.load(open(f))
+            except Exception:
+                continue
+            if d.get("status") in ("running", "cancel_requested"):
+                try:
+                    r.kernel.reconcile(d["task_id"])
+                    r.out(f"{DIM}↺ reconcile: {d['task_id']} → interrupted (owner died){RST}")
+                except Exception:
+                    pass
+    threading.Thread(target=_reconcile_orphans, daemon=True).start()
     while True:
         raw = r.q.get()
         if raw is None: break
