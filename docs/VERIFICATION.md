@@ -178,6 +178,7 @@ zcodecli result             # 打印最新任务结构化结果
 - 环境注记：codex 走 ChatGPT 账号**周配额**（2026-09-15 只剩 ~1%，跑矩阵前先 /status
   看一眼）；pi 在 herdr 外直跑会打一条 pi-herdr-orchestrator 扩展报错（HERDR_ENV 门禁，
   无害噪音）。
+- **ZCode 版本兼容细则**(坏版本识别、cli/config.json 格式、回滚步骤)统一见 docs/ZCODE-COMPAT.md。
 - 已知上游风险（2026-09-15）：herdr 0.8.2 core 存在「pane 输入黑洞」——存活中的 pane
   会被静默停止转发输入（输出不受影响；rename/焦点切换/纯时间老化均排除，触发源未定，
   无 pane.move 记录的 pane 也中过）。症状即超时未派票：`pane run`/`send-text`/
