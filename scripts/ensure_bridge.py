@@ -287,7 +287,8 @@ def write_wrappers(py, node_bin, zcode_bin):
         f.write(f'export PATH="{prefix}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"\n'
                 f'export NODE_BIN="{node_bin}"\nexport PY3="{py}"\n')
     with open(os.path.join(BASE, "env.json"), "w") as f:
-        json.dump({"node": node_bin, "py": py, "zcode_bin": zcode_bin}, f, indent=1)
+        json.dump({"node": node_bin, "py": py, "zcode_bin": zcode_bin,
+                   "version": PLUGIN_VERSION}, f, indent=1)
 
 def path_launchers():
     """Install real launcher files into a PATH dir — never symlinks, so the
@@ -377,6 +378,16 @@ def fix_windows_python3(py):
               f"put a working python3.exe on PATH for herdr panes",
               file=sys.stderr)
 
+
+def plugin_version():
+    try:
+        for line in open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "..", "herdr-plugin.toml")):
+            if line.startswith("version"):
+                return line.split("=", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+    return "dev"
 
 def main():
     os.makedirs(BASE, exist_ok=True)
