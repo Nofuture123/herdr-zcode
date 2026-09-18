@@ -36,15 +36,53 @@
 
 看到它 = 派票必失败,先按下面回滚。
 
+## 陷阱:磁盘版本 ≠ 运行版本(混合运行时,2026-09-18 实录)
+
+自动更新会**原地**把 `/Applications/ZCode.app` 升回 3.12.3(实测 9-17 14:24 ShipIt
+干过一次);之后磁盘文件可能又被手工换回 3.10.2,而**正在运行的桌面进程仍是
+3.12.3**。此时三个版本信号互相矛盾(plist=3.10.2、crashpad 注解=3.12.3、
+磁盘 helper 二进制=3.10.2),症状也不再是派票报错,而是:
+
+- 桌面 App 打开任何项目都建不了 session,v2 日志刷
+  `SQLite startup failed: startup_status_timeout`(`zcode-task-index-syncer` /
+  `subscribeSessionsIndexV4` 反复重试);
+- 根因:旧版 host(内存)+ 新版 agent(磁盘拉起)混跑,握手互卡 30s,host 的
+  SQLite 启动门超时。对卡住的 agent `sample` 之:0% CPU、全线程 kevent 空等。
+
+**判定运行版本唯一可信信号 = auto-update 日志自报**:
+
+```
+grep "already up to date (local=" ~/.zcode/v2/logs/$(date +%F).log
+# local=3.12.3 → 跑的就是坏版:退出桌面 App,确认磁盘是 3.10.2 后重开
+```
+
+更新器三个事实(都实测过):
+
+1. `autoDownloadAndInstallUpdates: false` 只拦"下载+安装",**每小时检查更新是独立
+   机制关不掉**——好在只查不装,无害;
+2. 更新源有 service manifest 覆写机制,`app-update.yml` 里的内网地址不在线**不能**
+   阻止它从公网 CDN 拿到新版本;
+3. `~/.zcode/v2/setting.json` 加 `"skippedElectronUpdateVersions": {"stable": "3.12.3"}`
+   可把 3.12.3 永久静默(频道枚举只有 stable/preview,`receivePreviewUpdates: false`
+   即 stable)。**App 运行中直接编辑该文件是安全的**:设置服务每次重写都从磁盘
+   读改写,实测 5 次重写后手工键完好保留。
+
 ## 回滚步骤(3.12.x → 3.10.2)
 
-1. 退出 ZCode 桌面;
-2. `mv /Applications/ZCode.app /Applications/ZCode-3.12.3-broken.app`(留作对照);
-3. 用 3.10.2 的 DMG:`hdiutil attach ZCode-3.10.2-mac-arm64.dmg -nobrowse -readonly`,
+1. **先关自动下载**(回滚后再关就晚了):`~/.zcode/v2/setting.json` 设
+   `"autoDownloadAndInstallUpdates": false`;
+2. 退出 ZCode 桌面;
+3. `mv /Applications/ZCode.app /Applications/ZCode-3.12.3-broken.app`(留作对照);
+4. 用 3.10.2 的 DMG:`hdiutil attach ZCode-3.10.2-mac-arm64.dmg -nobrowse -readonly`,
    `cp -R "/Volumes/ZCode 3.10.2-arm64/ZCode.app" /Applications/ZCode.app`,`hdiutil detach` 该卷;
-4. 清 updater 待装缓存,防自动更回坏版:
-   `rm -f ~/Library/Caches/@zcodedesktop-updater/pending/ZCode-3.12.*.zip`;
-5. 验证:`cd 任意目录 && zcode.cjs 路径 --prompt "reply OK" --mode plan` 应正常回复;
+5. **摘隔离标记**:`xattr -dr com.apple.quarantine /Applications/ZCode.app`——DMG 新拷贝
+   自带 quarantine,不摘会被 App Translocation 挂到随机只读路径运行(spawned CLI 的
+   PATH 全指向临时路径;arm64 下反方向的红线:绝不能改 bundle 内文件,签名 seal
+   破坏 = 启动即 SIGKILL);
+6. 清 updater 缓存——**zip 在缓存根目录,`pending/` 里只有元数据,整个目录一起清**:
+   `rm -rf ~/Library/Caches/@zcodedesktop-updater`;
+7. 写跳过名单(见上节第 3 条);
+8. 验证:`cd 任意目录 && zcode.cjs 路径 --prompt "reply OK" --mode plan` 应正常回复;
    再跑一张桥票(`zcodecli send --mode plan ...`)确认 succeeded。
 
 ## 配置文件:两个存储,各管各的
