@@ -183,3 +183,11 @@ zcodecli result             # 打印最新任务结构化结果
   会被静默停止转发输入（输出不受影响；rename/焦点切换/纯时间老化均排除，触发源未定，
   无 pane.move 记录的 pane 也中过）。症状即超时未派票：`pane run`/`send-text`/
   `send-keys` 全部无声丢失。绕行：重开面板。e2e FAIL 时先区分这一层。
+- **2026-09-19 全矩阵 PASS(v0.9.3,f3dafc1)**:codex/claude/pi 三主控全 PASS
+  (pi dispatch=48s;codex/claude 的 dispatch 413/434s 含人工救援)。两个 harness 竞态
+  本次真实发生,救援模式已验证:①codex TUI 初始化吞掉整段指令且 agent_status 误报
+  working(Context 停在 100% = 没发生对话)——等 TUI 完全空闲后重敲一次即成功,配额
+  无关(weekly 97%);②claude 的信任框处理时序不稳:TUI 尚未就绪/已被误 Enter 退出时
+  指令直接落进底层 zsh(parse error)——救援 = 重启 TUI → down+enter 选 Yes → 确认
+  agent=claude 且 idle → 再敲指令。矩阵裁决窗口内人工救援有效:harness 只认磁盘证据,
+  不问指令是谁敲的。
