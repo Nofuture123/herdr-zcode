@@ -1,6 +1,6 @@
 id = "zcode"
 name = "ZCode"
-version = "0.9.1"
+version = "0.9.2"
 min_herdr_version = "0.9.1"
 description = "ZCode in Herdr: TUI panes + a delegation bridge (any CLI agent -> native ZCode executor)"
 platforms = ["macos", "linux", "windows"]
@@ -24,21 +24,26 @@ platforms = ["macos", "linux"]
 command = ["python", "scripts/ensure_bridge.py"]
 platforms = ["windows"]
 
-# The user-facing ZCode TUI.
+# The user-facing ZCode TUI. NOTE: herdr runs pane entry commands with the
+# pane's --cwd (NOT the plugin root) when one is given, so the script path is
+# resolved via the HERDR_PLUGIN_ROOT env herdr injects into every plugin pane
+# — a plain relative path dies instantly on `plugin pane open --cwd <dir>`.
 [[panes]]
 id = "tui"
 title = "ZCode"
 placement = "split"
-command = ["python", "scripts/tui_entry.py"]
+command = ["python", "-c", "import os,runpy; runpy.run_path(os.path.join(os.environ.get('HERDR_PLUGIN_ROOT') or os.getcwd(), 'scripts', 'tui_entry.py'), run_name='__main__')"]
 
 # The delegation bridge: serial task queue backed by NAR -> ZCode headless.
 # ONE pane entry — herdr rejects duplicate pane ids. `python3` resolves on
 # all three platforms: Windows via the python3 shim ensure_bridge installs.
+# Entry resolves via HERDR_PLUGIN_ROOT: --cwd opens the pane IN the target
+# workspace, making it that workspace's dedicated (visible) executor.
 [[panes]]
 id = "executor"
 title = "zcode-bridge"
 placement = "tab"
-command = ["python3", "scripts/pane_entry.py"]
+command = ["python3", "-c", "import os,runpy; runpy.run_path(os.path.join(os.environ.get('HERDR_PLUGIN_ROOT') or os.getcwd(), 'scripts', 'pane_entry.py'), run_name='__main__')"]
 
 [[actions]]
 id = "open-here"

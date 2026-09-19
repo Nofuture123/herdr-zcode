@@ -192,10 +192,13 @@ def persist(d):
 # executor 用这条扫描线领取没有 claim 的票:谁闲谁领,pane 死了票也不丢,与 tty 的
 # 一切怪癖(重启窗口、TUI 竞态、错误 tty、echo 状态)彻底解耦。
 
-def start_disk_pickup(q, pane_id, busy_fn):
+def start_disk_pickup(q, pane_id, busy_fn, affine_ws=None):
     """Scan REQUESTS for unclaimed client-written tickets and enqueue them as
     JSON lines into the executor's stdin queue. busy_fn()=True 时跳过(票留给
-    闲着的 executor 或稍后);领取成功的票由主循环正常处理并写 receipt。"""
+    闲着的 executor 或稍后再扫);领取成功的票由主循环正常处理并写 receipt。
+    affine_ws=None:catch-all 收发台,什么票都能领——但某 workspace 已有活着的
+    专属 pane 时必须让路(票要出现在它自己的窗口里)。affine_ws=路径:专属
+    pane,只领自己 workspace 的票。"""
     import threading
     def scan():
         seen = set()
@@ -218,6 +221,12 @@ def start_disk_pickup(q, pane_id, busy_fn):
                         continue   # 新票:面板快路径大概率正在投递,不抢(pane 亲和)
                     if busy_fn():
                         break   # 本 pane 正忙:票留给别人/稍后再扫
+                    try:
+                        wants = broker.pickup_wants(affine_ws, spec.get("workspace"))
+                    except Exception:
+                        wants = True
+                    if not wants:
+                        continue   # 不是本 pane 的票:留给专属 pane(或稍后无人领再说)
                     st = broker.claim_request(rid, pane_id)
                     if st == "new":
                         seen.add(rid)

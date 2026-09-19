@@ -157,11 +157,15 @@ def cmd_open(a):
     args = ["plugin", "pane", "open", "--plugin", "zcode",
             "--entrypoint", "executor", "--placement", a.placement]
     ws_arg = a.workspace
+    ws_path = None
     if ws_arg and (os.path.isdir(ws_arg) or ws_arg.startswith(("/", "~", "."))):
         # plugin pane open --workspace wants a workspace ID (e.g. w73), not a
         # path; a path almost always means the caller wants the cwd — same
-        # fixup as chat-open, landed via --cwd
-        args += ["--cwd", os.path.realpath(os.path.expanduser(ws_arg))]
+        # fixup as chat-open, landed via --cwd. QAB_DEFAULT_WORKSPACE pins the
+        # executor's default workspace independently of the pane's cwd.
+        ws_path = os.path.realpath(os.path.expanduser(ws_arg))
+        args += ["--cwd", ws_path,
+                 "--env", f"QAB_DEFAULT_WORKSPACE={ws_path}"]
         print("note: --workspace got a path; using it as --cwd (default workspace)",
               file=sys.stderr)
         ws_arg = None
@@ -218,6 +222,17 @@ def cmd_send(a):
     ws = a.workspace or os.getcwd()
     if not os.path.isdir(ws): print(f"workspace not a dir: {ws}", file=sys.stderr); return 2
     ws = os.path.realpath(ws)   # one canonical form: locks and sessions key on this
+    # visibility routing: a live dedicated pane for this workspace gets the
+    # fast-path copy so the ticket streams in ITS window (unless the caller
+    # pinned a pane explicitly). No dedicated pane -> the catch-all as before.
+    if not getattr(a, 'pane', None):
+        try:
+            aff = broker.affine_pane_for(ws)
+        except Exception:
+            aff = None
+        if aff and aff != pid:
+            print(f"note: routing to dedicated pane {aff} for this workspace", file=sys.stderr)
+            pid = aff
     text = a.text
     stripped = text.strip()
     nonce = secrets.token_hex(4)

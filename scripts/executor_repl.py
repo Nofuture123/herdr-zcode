@@ -415,13 +415,40 @@ def _plugin_version():
         pass
     return "?"
 
+
+def _retitle(workspace):
+    """Best-effort pane rename so masters can reference the dedicated window
+    by name (`herdr pane rename` semantics: label only, pane id unchanged)."""
+    herdr = os.environ.get("HERDR_BIN_PATH") or "herdr"
+    title = "zcode:" + (os.path.basename(workspace.rstrip(os.sep)) or "ws")
+    pane = os.environ.get("HERDR_PANE_ID")
+    if not pane:
+        return
+    try:
+        subprocess.run([herdr, "pane", "rename", pane, title],
+                       capture_output=True, text=True, timeout=5)
+    except Exception:
+        pass
+
 def main(kernel=None):
     kernel = kernel or build_kernel()
     r = Reception(kernel)
+    # Per-workspace visibility: a pane opened with `zcodecli open --cwd <wt>`
+    # has DEFAULT_WS=<wt> != the plugin root — it becomes the DEDICATED
+    # executor for that workspace (heartbeat registered, tickets for it route
+    # here, pane retitles itself). The pane opened without --cwd stays the
+    # catch-all reception queue (claims anything no dedicated pane wants).
+    plugin_root = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    affine_ws = DEFAULT_WS if DEFAULT_WS != plugin_root else None
     W = 78
     r.out(f"{CYA}╭{'─'*(W-2)}╮{RST}")
     r.out(f"{CYA}│{RST} {BOLD}zcode-bridge executor{RST} · reception queue {DIM}(pure transport · plugin {_plugin_version()}){RST}")
     r.out(f"{CYA}│{RST} default-ws {DIM}{DEFAULT_WS}{RST}  mode {YEL}{DEFAULT_MODE}{RST} · policy {YEL}{DEFAULT_POLICY}{RST}")
+    if affine_ws:
+        r.out(f"{CYA}│{RST} {GREEN}◈ dedicated window for this workspace{RST}{DIM} — its tickets route here;{RST}")
+        r.out(f"{CYA}│{RST} {DIM}other workspaces stay on the catch-all zcode-bridge pane{RST}")
+    else:
+        r.out(f"{CYA}│{RST} {DIM}catch-all reception · tickets for any workspace no dedicated pane serves{RST}")
     r.out(f"{CYA}│{RST} {DIM}dispatched tickets run in their own workspace (send stamps the caller's cwd){RST}")
     r.out(f"{CYA}│{RST} {DIM}facts reported; acceptance & rework discipline = master's job{RST}")
     r.out(f"{CYA}╰{'─'*(W-2)}╯{RST}")
@@ -429,12 +456,23 @@ def main(kernel=None):
     _r = marker_line("ready")
     if _r:
         r.out(_r)
+    if affine_ws:
+        def _heartbeat():
+            while True:
+                try:
+                    broker.register_pane(r.pane_id or "repl", affine_ws, os.getpid())
+                except Exception:
+                    pass
+                time.sleep(5)
+        threading.Thread(target=_heartbeat, daemon=True).start()
+        _retitle(affine_ws)
     r.q = queue.Queue()
     def reader():
         for raw in sys.stdin: r.q.put(raw)
         r.q.put(None)
     threading.Thread(target=reader, daemon=True).start()
-    start_disk_pickup(r.q, r.pane_id or "repl", lambda: r.busy is not None)
+    start_disk_pickup(r.q, r.pane_id or "repl", lambda: r.busy is not None,
+                      affine_ws=affine_ws)
     # 重启/崩溃后,把 owner 已死的 running 任务标成 interrupted(诚实状态),
     # 否则 inspect 永远返回过期状态,调用方无法区分「在跑」和「owner 已死」
     def _reconcile_orphans():

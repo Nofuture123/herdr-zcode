@@ -24,6 +24,7 @@ LEDGERS = os.path.join(BASE, "ledgers")
 RESULTS = os.path.join(BASE, "results")
 OWNERS = os.path.join(BASE, "owners")
 RECEIPTS = os.path.join(BASE, "receipts")
+PANES = os.path.join(BASE, "panes")
 TASK_RE = re.compile(r"^t-[0-9a-f]+$")
 REQ_RE = re.compile(r"^r-[0-9a-f]{16}$")
 NONCE_RE = re.compile(r"^[0-9a-zA-Z_-]{1,64}$")
@@ -41,7 +42,7 @@ def _secure(path, dir=False):
 
 
 def init_dirs():
-    for d in (REQUESTS, LEDGERS, RESULTS, OWNERS, RECEIPTS):
+    for d in (REQUESTS, LEDGERS, RESULTS, OWNERS, RECEIPTS, PANES):
         os.makedirs(d, exist_ok=True)
         os.chmod(d, 0o700)
         for f in os.listdir(d):
@@ -333,6 +334,76 @@ def owner_of(task_id):
         return json.load(open(p)).get("pane_id")
     except Exception:
         return None
+
+
+# ---------- pane registry: per-workspace visible executors ----------
+# 每张票一个可见窗口的落点:workspace 专属 pane(`zcodecli open --cwd <wt>`)启动后
+# 定期写心跳,send / 磁盘领取据此把票路由到对应 pane——可见性,不改变串行语义。
+
+PANE_HEARTBEAT_TTL = 15   # seconds; writers refresh every 5
+
+def _pane_alive(pid):
+    """Liveness by signal-0 probe. POSIX only: on Windows os.kill(pid, 0)
+    TERMINATES the process instead of probing, so there we trust the
+    heartbeat freshness alone."""
+    if not pid or os.name == "nt":
+        return True
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+def register_pane(pane_id, workspace, pid):
+    """Write/refresh this executor's heartbeat. workspace=None marks the
+    catch-all reception pane (claims anything); a concrete workspace marks a
+    dedicated pane that only wants tickets for that workspace."""
+    safe = re.sub(r"[^A-Za-z0-9]", "", pane_id or "pane") or "pane"
+    rec = {"pane_id": pane_id, "pid": pid,
+           "workspace": os.path.realpath(workspace) if workspace else None,
+           "ts": time.time()}
+    fd, tmp = tempfile.mkstemp(dir=PANES, prefix="tmp-")
+    with os.fdopen(fd, "w") as f:
+        json.dump(rec, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, os.path.join(PANES, safe + ".json"))
+
+def affine_pane_for(workspace, fresh=PANE_HEARTBEAT_TTL):
+    """Live executor pane dedicated to this workspace, else None.
+    Live = heartbeat written within `fresh` seconds AND its pid still exists."""
+    if not workspace:
+        return None
+    ws = os.path.realpath(workspace)
+    try:
+        names = os.listdir(PANES)
+    except OSError:
+        return None
+    now = time.time()
+    hit = None
+    for f in sorted(names):
+        if not f.endswith(".json"):
+            continue
+        try:
+            rec = json.load(open(os.path.join(PANES, f)))
+        except Exception:
+            continue
+        if rec.get("workspace") != ws:
+            continue
+        if now - float(rec.get("ts") or 0) > fresh:
+            continue
+        if not _pane_alive(rec.get("pid")):
+            continue
+        hit = rec.get("pane_id")
+    return hit
+
+def pickup_wants(affine_ws, spec_ws):
+    """May THIS executor claim a disk ticket for spec_ws?
+    affine_ws=None (catch-all pane): any workspace EXCEPT those served by a
+    live dedicated pane — defer so the ticket shows up in its own window.
+    affine_ws set (dedicated pane): only its own workspace."""
+    if affine_ws:
+        return bool(spec_ws) and os.path.realpath(spec_ws) == os.path.realpath(affine_ws)
+    return affine_pane_for(spec_ws) is None
 
 
 # ---------- receipts: fold-proof submit acknowledgements ----------

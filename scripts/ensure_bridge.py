@@ -288,7 +288,7 @@ def write_wrappers(py, node_bin, zcode_bin):
                 f'export NODE_BIN="{node_bin}"\nexport PY3="{py}"\n')
     with open(os.path.join(BASE, "env.json"), "w") as f:
         json.dump({"node": node_bin, "py": py, "zcode_bin": zcode_bin,
-                   "version": PLUGIN_VERSION}, f, indent=1)
+                   "version": plugin_version()}, f, indent=1)
 
 def path_launchers():
     """Install real launcher files into a PATH dir — never symlinks, so the

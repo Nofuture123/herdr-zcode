@@ -42,6 +42,24 @@ Every pane is an independent herdr agent (own working/idle/done state, own nativ
 Addressing is always via --pane; the label-less reception pane (zcode-bridge) remains the
 serial queue for quick one-off delegations.
 
+## Per-workspace visible windows (v0.9.2+)
+A ticket normally streams inside the catch-all reception pane (zcode-bridge). To give a
+workspace ITS OWN named, visible window (per-ticket visibility without Devin):
+```bash
+zcodecli open --workspace /path/to/worktree --placement tab --herdr-workspace w73
+```
+The pane retitles itself `zcode:<dir-name>` and registers a live heartbeat. Routing is
+automatic from then on:
+- `zcodecli send` run with cwd inside that workspace (or `--workspace <path>`) fast-paths
+  the ticket into THAT pane; disk-pickup tickets for it land there too;
+- the catch-all pane defers — a workspace with a live dedicated pane never gets its
+  tickets claimed elsewhere; if the dedicated pane dies, the heartbeat goes stale and the
+  catch-all self-heals (claims again);
+- dedicated panes are strictly workspace-scoped (serial queue per workspace, same as the
+  NAR workspace lock). Quick one-offs for OTHER workspaces still go to zcode-bridge.
+NOTE: herdr runs pane entry commands with the pane's `--cwd` — the entry resolves its
+scripts via HERDR_PLUGIN_ROOT, so `--cwd` is safe (pre-0.9.2 panes died within seconds).
+
 ## Lifecycle: open / close / crash behavior
 - Open: `zcodecli open` (idempotent; spawns the executor pane, new pane id, same label).
 - Close: `zcodecli close` (or `herdr pane close <pane_id>`). Effects:

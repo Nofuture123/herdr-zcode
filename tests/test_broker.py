@@ -15,6 +15,7 @@ broker.LEDGERS = os.path.join(tmp, "ledgers")
 broker.RESULTS = os.path.join(tmp, "results")
 broker.OWNERS = os.path.join(tmp, "owners")       # owners/receipts are real
 broker.RECEIPTS = os.path.join(tmp, "receipts")   # cross-env state: never leak
+broker.PANES = os.path.join(tmp, "panes")         # pane heartbeat registry
 broker.init_dirs()
 
 WS = tempfile.mkdtemp()
@@ -206,3 +207,50 @@ class TestDiskDelivery(unittest.TestCase):
             json.dump(rec, f)
         un = [os.path.basename(p) for p in broker.unclaimed_requests()]
         self.assertNotIn(rid + ".json", un)
+
+
+class TestPaneRegistry(unittest.TestCase):
+    def setUp(self):
+        for f in os.listdir(broker.PANES):
+            os.remove(os.path.join(broker.PANES, f))
+
+    def test_fresh_heartbeat_is_found(self):
+        broker.register_pane("w1:pA", WS, os.getpid())
+        self.assertEqual(broker.affine_pane_for(WS), "w1:pA")
+
+    def test_stale_heartbeat_ignored(self):
+        broker.register_pane("w1:pA", WS, os.getpid())
+        import glob
+        f = glob.glob(os.path.join(broker.PANES, "*.json"))[0]
+        rec = json.load(open(f)); rec["ts"] -= 999
+        json.dump(rec, open(f, "w"))
+        self.assertIsNone(broker.affine_pane_for(WS))
+
+    def test_other_workspace_not_matched(self):
+        other = tempfile.mkdtemp()
+        broker.register_pane("w1:pA", WS, os.getpid())
+        self.assertIsNone(broker.affine_pane_for(other))
+
+    def test_dead_pid_ignored(self):
+        if os.name == "nt":
+            self.skipTest("pid liveness probe is posix-only")
+        broker.register_pane("w1:pA", WS, 99999999)   # pid cannot exist (macOS max 99998)
+        self.assertIsNone(broker.affine_pane_for(WS))
+
+    def test_catchall_pane_never_matched(self):
+        broker.register_pane("w1:p0", None, os.getpid())
+        self.assertIsNone(broker.affine_pane_for(WS))
+
+    def test_pickup_wants_matrix(self):
+        other = tempfile.mkdtemp()
+        # dedicated pane: strictly its own workspace (realpath-normalized both
+        # sides, so an unnormalized alias of the same dir still matches)
+        self.assertTrue(broker.pickup_wants(WS, WS))
+        self.assertTrue(broker.pickup_wants(WS + "/", WS))
+        self.assertFalse(broker.pickup_wants(WS, other))
+        # catch-all: claims anything while no dedicated pane lives
+        self.assertTrue(broker.pickup_wants(None, other))
+        # ...but defers to a live dedicated pane for ITS workspace
+        broker.register_pane("w1:pA", WS, os.getpid())
+        self.assertFalse(broker.pickup_wants(None, WS))
+        self.assertTrue(broker.pickup_wants(None, other))
