@@ -301,6 +301,7 @@ def cmd_send(a):
     # pane markers on both sources are the fallback for older executors.
     t0 = time.time()
     deadline = t0 + 15
+    queued_patience = 90   # a workspace-lock queue can park the ticket longer
     receipt = None
     marks = []
     def _rid_task():
@@ -311,6 +312,17 @@ def cmd_send(a):
             return ""
     while time.time() < deadline:
         receipt = broker.load_receipt(nonce)
+        if receipt and receipt.get("ok") and str(receipt.get("status", "")).startswith("queued"):
+            # parked (disk queue or workspace lock): hold the line — the t-id
+            # appears once the executor actually submits (field report 附: the
+            # caretaker wants the t-id, not just the r-id)
+            deadline = max(deadline, t0 + queued_patience)
+            receipt = None
+            if rid and _rid_task():
+                print(f"accepted: {rid} {_rid_task()} queued")
+                return 0
+            time.sleep(1.0)
+            continue
         if receipt:
             break
         if rid and _rid_task():
@@ -592,30 +604,56 @@ def cmd_open_session(a):
 
 
 def cmd_cancel(a):
-    tid = a.nar_args[0] if a.nar_args else None
-    if not tid: print("usage: zcodecli cancel <task_id>", file=sys.stderr); return 2
-    owner = broker.owner_of(tid)
-    pid = owner or need_pane(getattr(a, "pane", None))
-    rc, stdout, stderr = herdr(["pane", "run", pid, f"/cancel {tid}"])
-    if rc != 0: print((stderr or stdout).strip(), file=sys.stderr); return rc
-    rc2, out2, _ = herdr(["pane", "wait-output", "--regex",
-                          "already_terminal|already terminal|cancel_requested|cancelled \\(confirmed|interrupted|not known to this executor|owned by pane",
-                          "--timeout", "35000", pid], timeout=40)
-    rc3, out3, _ = herdr(["pane", "read", pid, "--source", "visible", "--lines", "40"])
-    for l in (out3 or "").splitlines()[::-1]:
-        if "already_terminal" in l: print(l.strip()); return 0
-        if "interrupted" in l: print(l.strip()); return 0
-        if "cancel_requested" in l: print(l.strip()); return 1
-        if "cancelled (confirmed stopped)" in l or "not the running task" in l:
-            print(l.strip()); return 0 if "confirmed" in l else 1
-        if ("not known to this executor" in l or "owned by pane" in l
-                or "cannot cancel" in l or "refusing to cancel" in l):
-            print(l.strip()); return 1
-    print((out2 or "no cancel outcome within 35s").strip(), file=sys.stderr); return 1
+    """Offline, synchronous cancel. Accepts a request id (disk queue) or a
+    task id (NAR) — no executor pane required (field report #10)."""
+    target = a.nar_args[0] if a.nar_args else None
+    if not target:
+        print("usage: zcodecli cancel <request_id|task_id>", file=sys.stderr); return 2
+    if target.startswith("r-"):
+        st = broker.cancel_request(target)
+        if st == "cancelled":
+            print(f"{target}: queue request cancelled (executor will skip it)")
+            return 0
+        if st == "has_task":
+            target = broker.load_request(target)["task_id"]
+        else:
+            print(f"{target}: unknown request id", file=sys.stderr); return 1
+    if not broker.TASK_RE.match(target):
+        print(f"not a task/request id: {target}", file=sys.stderr); return 2
+    pre = broker.nar_task_status(target)
+    if pre in broker.NAR_TERMINAL:
+        print(f"{target}: already terminal ({pre}) — nothing to cancel")
+        return 0
+    if pre is None:
+        print(f"{target}: unknown to the runner (stale id?)", file=sys.stderr); return 1
+    try:
+        from executor_common import build_kernel
+        kernel = build_kernel()
+    except Exception as e:
+        print(f"runner unavailable: {e}", file=sys.stderr); return 2
+    try:
+        res = kernel.cancel(target)
+    except Exception as e:
+        print(f"cancel failed: {e}", file=sys.stderr); return 2
+    # cross-process cancel only writes the status; the owning executor (if
+    # alive) escalates to a real kill within its poll loop — give it a moment
+    deadline = time.time() + 6
+    status = res.get("status")
+    while status not in broker.NAR_TERMINAL and time.time() < deadline:
+        time.sleep(0.5)
+        status = broker.nar_task_status(target)
+    if status in broker.NAR_TERMINAL:
+        print(f"{target}: cancelled (status={status})")
+        return 0
+    print(f"{target}: cancel_requested but not confirmed within 6s "
+          f"(owner dead or blocked-watcher) — hard-stop with: zcodecli kill {target}")
+    return 1
 
 def cmd_kill(a):
     """Force-terminate a stuck task and RELEASE its workspace lock (nar kill).
-    For cancel-unresponsive tasks only — cancel is always tried first."""
+    For cancel-unresponsive tasks only — cancel is always tried first.
+    Cross-process kill cannot reach the owner's in-memory lock object, so the
+    terminal-holder lock residue is swept here (field report #8)."""
     if not a.nar_args:
         print("usage: zcodecli kill <task_id>", file=sys.stderr); return 2
     if not os.path.exists(NAR):
@@ -623,6 +661,9 @@ def cmd_kill(a):
     p = subprocess.run([NAR, "kill", *a.nar_args, "--yes"], capture_output=True, text=True)
     try:
         d = json.loads(p.stdout)
+        removed = broker.sweep_workspace_locks(task_id=d.get("task_id") or (a.nar_args[0] if a.nar_args else None))
+        if removed:
+            print(f"workspace lock released: {len(removed)} file(s)")
         print(f"{d.get('task_id')}: killed={d.get('killed')} status={d.get('status')}")
         return 0 if d.get("killed") else 1
     except Exception:

@@ -101,15 +101,18 @@ class TestReception(unittest.TestCase):
         spec = {"goal": "x", "workspace": WS, "mode": "plan", "idempotency_key": "dup1"}
         r.start(json.dumps(spec))
         n1 = len(k.submits)
-        r.start(json.dumps(spec))                            # terminal state -> duplicate
-        self.assertIn("duplicate", buf.getvalue())
-        self.assertEqual(len(k.submits), n1)
+        # first attempt terminal -> key freed -> same key starts a NEW task
+        # (field report #9: a key must never shadow a fresh attempt)
+        buf.truncate(0); buf.seek(0)
+        r.start(json.dumps(spec))
+        self.assertNotIn("duplicate", buf.getvalue())
+        self.assertEqual(len(k.submits), n1 + 1)
         spec2 = {"goal": "x", "workspace": WS, "mode": "plan", "idempotency_key": "dup2"}
         s2 = broker.normalize_spec(spec2, WS, "yolo", "allow")
         broker.idempotency_claim("dup2", broker.fingerprint(s2))   # stuck claim
         r.start(json.dumps(spec2))
         self.assertIn("idempotency_indeterminate", buf.getvalue())
-        self.assertEqual(len(k.submits), n1)                 # never auto-rerun
+        self.assertEqual(len(k.submits), n1 + 1)             # never auto-rerun
 
     def test_continue_inherits_and_sets_session_ref(self):
         k, buf, r = self.make()

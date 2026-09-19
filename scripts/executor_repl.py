@@ -39,6 +39,7 @@ class Reception:
         self.pane_id = pane_id or os.environ.get("HERDR_PANE_ID")
         self.busy = None            # task_id
         self.active_request = None  # request_id
+        self._own_cancels = set()   # tids this pane itself is cancelling
         self.pending_steer = None
         self.last_finished_tid = None
         self.current_nonce = None
@@ -63,7 +64,7 @@ class Reception:
                                  **({"nonce": nonce} if nonce else {})})
 
     # -- lifecycle --
-    def submit(self, spec, rid):
+    def submit(self, spec, rid, attempt=1):
         if spec.get("idempotency_key"):
             broker.idempotency_state(spec["idempotency_key"], broker.fingerprint(spec),
                                      "submitting", request_id=rid)
@@ -73,6 +74,12 @@ class Reception:
                       idempotency_key=spec.get("idempotency_key"))
         if spec.get("session_ref"):
             kwargs["session_ref"] = spec["session_ref"]
+        if spec.get("idempotency_key"):
+            # The BRIDGE ledger owns once-only semantics. NAR's own key must be
+            # unique per attempt: NAR returns the stale existing task forever
+            # for a repeated key (field report #9), so a fresh attempt after a
+            # terminal predecessor would collide with it.
+            kwargs["idempotency_key"] = f"{spec['idempotency_key']}#{rid}#{attempt}"
         try:
             snap = self.kernel.submit("zcode", spec["goal"], spec["workspace"], **kwargs)
         except Exception:
@@ -126,6 +133,17 @@ class Reception:
             except queue.Empty:
                 pass
             snap = self.kernel.wait(tid, timeout_sec=0.5)
+            st = snap.get("status")
+            if st == "cancel_requested" and tid not in self._own_cancels:
+                # cross-process `zcodecli cancel`: the CLI can only write the
+                # status — THIS process owns the native session and the lock,
+                # so escalate to a real kill (full cleanup, lock released).
+                self.out(f"{YEL}cancel requested from another session — "
+                         f"escalating to kill{RST}")
+                try:
+                    self.kernel.kill(tid)
+                except Exception:
+                    pass
             if snap.get("status") not in ("submitted", "running", "cancel_requested", None):
                 return snap, time.time() - t0
         return self.kernel.snapshot(tid), time.time() - t0
@@ -151,6 +169,11 @@ class Reception:
         if getattr(self, "_tail_thread", None):
             self._tail_thread.join(timeout=1.0)
         self.sig_result(rid, data["task_id"])
+        # the key guarded THIS submission; terminal means it is free again —
+        # resending the same key intentionally starts a NEW task (field
+        # report #9: a key must never shadow a fresh attempt with a stale one)
+        if spec.get("idempotency_key"):
+            broker.idempotency_terminal(spec["idempotency_key"], broker.fingerprint(spec))
         mark = "✓" if data["ok"] else "✗"
         self.out(f"{_C_DIM}── {mark} {data['task_id']} {data['status']} · "
                  f"verify_ok={data['verify_ok']} ({data.get('_dur', '?')}s) ──{RST}")
@@ -213,12 +236,59 @@ class Reception:
         self.active_spec, self.active_request = spec, rid
         self.out(f"{DIM}── {time.strftime('%H:%M:%S')} ▶ {display_text(spec['goal'], 60)}{RST}")
         report("working", sanitize(spec["goal"], 80))
-        tid = self.submit(spec, rid)
-        snap, dur = self.poll(tid, time.time() + spec["timeout"])
-        if snap.get("status") in ("submitted", "running", None):
-            self.out(f"[zcodecli:wait_timeout] {rid} {tid} (task continues; busy held)")
-            return self.background_wait(tid, spec, rid)
-        return self.finish(snap, spec, rid, dur)
+        # A busy workspace QUEUES, it does not fail (field report #6): wait for
+        # the NAR lock before submitting, and if a submit still loses the race
+        # (NAR fails the task async with workspace_busy), requeue — bounded.
+        lock_window = min(float(spec["timeout"]), 1800.0)
+        lock_deadline = time.time() + lock_window
+        attempt = 0
+        while True:
+            attempt += 1
+            if not self._wait_workspace_free(spec, rid, lock_deadline):
+                self.out(f"{RED}✗ workspace still locked after {int(lock_window)}s "
+                         f"— giving up (key released, resend is legal){RST}")
+                if spec.get("idempotency_key"):
+                    broker.idempotency_release(spec["idempotency_key"])
+                self.sig_error(f"workspace_lock_timeout: {spec['workspace']} still locked "
+                               f"after {int(lock_window)}s", nonce=spec.get("nonce"))
+                report("idle")
+                return None
+            tid = self.submit(spec, rid, attempt)
+            snap, dur = self.poll(tid, time.time() + spec["timeout"])
+            if snap.get("status") in ("submitted", "running", None):
+                self.out(f"[zcodecli:wait_timeout] {rid} {tid} (task continues; busy held)")
+                return self.background_wait(tid, spec, rid)
+            data = collect(snap)
+            if (data.get("status") == "failed" and attempt < 3
+                    and "workspace_busy" in str(data.get("error") or "")
+                    and time.time() < lock_deadline):
+                # lost the lock race between free-check and submit: the task
+                # never ran. Sweep terminal-lock residue and requeue.
+                self.out(f"{YEL}⏳ lost the workspace-lock race — requeueing "
+                         f"(attempt {attempt + 1}/3){RST}")
+                broker.sweep_workspace_locks(workspace=spec["workspace"])
+                continue
+            return self.finish(snap, spec, rid, dur)
+
+    def _wait_workspace_free(self, spec, rid, deadline):
+        """Poll the NAR workspace lock with backoff (2→15s) until free or the
+        window closes. One 'queued' receipt so the master knows it's parked."""
+        announced = False
+        delay = 2.0
+        while True:
+            holder = broker.workspace_lock_holder(spec["workspace"])
+            if not holder:
+                return True
+            if time.time() >= deadline:
+                return False
+            if not announced:
+                announced = True
+                self.out(f"{YEL}⏳ workspace locked by {holder.get('task_id')} — queueing "
+                         f"(up to {int(deadline - time.time())}s){RST}")
+                receipt_ok(spec.get("nonce"), request_id=rid, task_id="-",
+                           status="queued (workspace lock)")
+            time.sleep(min(delay, max(0.1, deadline - time.time())))
+            delay = min(15.0, delay * 2)
 
     # -- entry points --
     def start(self, line):
@@ -312,17 +382,21 @@ class Reception:
             self.sig_error(f"task {tid} is not the running task ({self.busy}); cannot cancel from here")
             return "not_owner"
         busy_was_mine = (tid == self.busy)
-        self.out(f"{YEL}cancelling {tid} …{RST}")
-        self.kernel.cancel(tid)
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            st = self.kernel.snapshot(tid).get("status")
-            if st not in ("running", "submitted", "cancelling", "cancel_requested", None):
-                break
-            time.sleep(0.3)
-        else:
-            self.kernel.kill(tid)
-            st = self.kernel.snapshot(tid).get("status")
+        self._own_cancels.add(tid)
+        try:
+            self.out(f"{YEL}cancelling {tid} …{RST}")
+            self.kernel.cancel(tid)
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                st = self.kernel.snapshot(tid).get("status")
+                if st not in ("running", "submitted", "cancelling", "cancel_requested", None):
+                    break
+                time.sleep(0.3)
+            else:
+                self.kernel.kill(tid)
+                st = self.kernel.snapshot(tid).get("status")
+        finally:
+            self._own_cancels.discard(tid)
         if st == "cancelled":
             self.out("✓ cancelled (confirmed stopped)")
         elif st in ("succeeded", "failed"):
@@ -372,18 +446,45 @@ class Reception:
             return self.sig_error(f"busy: {self.busy} running; serial queue — /cancel or wait")
         self.start(line)
 
+    def busy_active(self):
+        """True while self.busy is genuinely unfinished. Heals the stuck-busy
+        case (field report #7): a busy task that is ALREADY terminal but whose
+        finish() never ran gets finalized here instead of rejecting every new
+        line with a zombie 'busy' error forever."""
+        if not self.busy:
+            return False
+        try:
+            snap = self.kernel.snapshot(self.busy)
+        except Exception:
+            return True
+        st = (snap or {}).get("status")
+        if st is None or st in ("queued", "submitted", "running", "blocked",
+                                "cancel_requested", "cancelling"):
+            return True
+        spec = (getattr(self, "active_spec", None) or getattr(self, "last", None)
+                or {"goal": "(recovered task)", "workspace": DEFAULT_WS, "mode": "plan",
+                    "scope": [], "verify": [], "policy": "allow", "timeout": 600})
+        try:
+            self.finish(snap, spec, self.active_request or f"r-recovered", 0.0)
+        except Exception:
+            self.busy = self.active_request = None
+            report("idle")
+        return self.busy is not None
+
     def process(self, line):
         """Main-loop body: honors /cancel mid-run, otherwise dispatches."""
         line = line.strip()
         if self.busy and not (line == "/cancel" or line.startswith("/cancel ")
                           or line.startswith("/steer ")):
-            if line:
-                incoming = None
-                if line.startswith("{"):
-                    try: incoming = json.loads(line).get("nonce")
-                    except Exception: pass
-                self.sig_error(f"busy: {self.busy} running", nonce=incoming)
-            return
+            if self.busy_active():
+                if line:
+                    incoming = None
+                    if line.startswith("{"):
+                        try: incoming = json.loads(line).get("nonce")
+                        except Exception: pass
+                    self.sig_error(f"busy: {self.busy} running", nonce=incoming)
+                return
+            # busy was stale and got finalized — fall through to dispatch
         if line == "/cancel" or line.startswith("/cancel "):
             if self.busy:
                 self.do_cancel()
@@ -471,8 +572,13 @@ def main(kernel=None):
         for raw in sys.stdin: r.q.put(raw)
         r.q.put(None)
     threading.Thread(target=reader, daemon=True).start()
-    start_disk_pickup(r.q, r.pane_id or "repl", lambda: r.busy is not None,
-                      affine_ws=affine_ws)
+    start_disk_pickup(r.q, r.pane_id or "repl", r.busy_active, affine_ws=affine_ws)
+    # terminal-holder lock residue (cross-process kills leave it behind) would
+    # make every first submit of a workspace queue behind a ghost
+    try:
+        broker.sweep_workspace_locks()
+    except Exception:
+        pass
     # 重启/崩溃后,把 owner 已死的 running 任务标成 interrupted(诚实状态),
     # 否则 inspect 永远返回过期状态,调用方无法区分「在跑」和「owner 已死」
     def _reconcile_orphans():

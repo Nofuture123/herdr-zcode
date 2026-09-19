@@ -104,12 +104,29 @@ scripts via HERDR_PLUGIN_ROOT, so `--cwd` is safe (pre-0.9.2 panes died within s
    that file (or `zcodecli result`), never the pane: ready/accepted/summary/result/done
    markers are hidden unless `QAB_EXEC_MARKERS=1`; `[zcodecli:error]` stays visible.
 
-## Parallelism: serial per workspace
-The native-agent-router locks the workspace (abspath hash; released only when the pid dies).
-TWO TICKETS ON THE SAME DIRECTORY RUN SERIALLY — the second is rejected with `workspace_busy`
-while the first runs. For parallel tickets give each its own path: a git worktree, or at least
-a distinct directory alias (symlink) of the same project. Scope-disjoint files do NOT lift
-the lock today.
+## Parallelism: serial per workspace (v0.9.3: busy QUEUES, no longer fails)
+The native-agent-router locks the workspace (abspath hash). TWO TICKETS ON THE SAME
+DIRECTORY RUN SERIALLY — since v0.9.3 the second ticket QUEUES behind the lock
+(receipt `queued (workspace lock)`, backoff 2→15s, window = min(ticket timeout, 1800s);
+on window exhaustion it fails honestly with `workspace_lock_timeout` and the key is
+released). The bridge also sweeps terminal-holder lock residue (a cross-process kill
+can never release the submitter's in-memory lock — dead task = free workspace).
+For parallel tickets give each its own path: a git worktree, or at least a distinct
+directory alias (symlink) of the same project. Scope-disjoint files do NOT lift the
+lock today.
+
+## Keys, cancel, kill (v0.9.3 semantics)
+- `--key` dedups ONE submission, not forever: while the first attempt is in flight a
+  resend returns `duplicate`; once it goes terminal, resending the SAME key creates a
+  NEW task. Use unique keys per ticket if you never want a rerun.
+- `zcodecli cancel <request_id|task_id>` is offline and synchronous — no pane needed:
+  a queued request gets a tombstone (executor skips it); a task gets a real cancel
+  (the owning executor escalates a cross-process cancel to a kill; already-terminal
+  answers instantly).
+- `zcodecli kill <task_id>` stays the hard stop; it now also sweeps the workspace lock
+  the dead owner left behind.
+- `send` holds the line up to 90s when the ticket is queued, so you usually get the
+  t-id directly; `result --request <rid>` always works meanwhile.
 
 ## Review & evidence conventions
 - Review tickets that must RUN the tests: use `mode:"edit"` with

@@ -216,6 +216,8 @@ def unclaimed_requests():
             continue
         if f"{rid}.claim" in names:
             continue
+        if os.path.exists(os.path.join(REQUESTS, rid + ".cancel")):
+            continue
         try:
             rec = json.load(open(os.path.join(REQUESTS, f)))
         except Exception:
@@ -234,7 +236,10 @@ def result_path(task_id):
 
 def idempotency_claim(key, fp):
     """Returns (status, record): status in {"new","duplicate","conflict"}.
-    duplicate -> record has request_id of the ORIGINAL request."""
+    duplicate -> record has request_id of the ORIGINAL request.
+    A key whose previous attempt reached a TERMINAL state starts fresh: the
+    key dedups ONE submission, not all future ones (same key after terminal
+    = a new task, per the field report)."""
     if not key:
         return "new", None
     h = hashlib.sha256(key.encode()).hexdigest()[:24]
@@ -245,12 +250,15 @@ def idempotency_claim(key, fp):
         try:
             if os.path.exists(recp):
                 rec = json.load(open(recp))
-                if not hmac.compare_digest(rec.get("fingerprint", ""), fp):
+                if rec.get("state") == "terminal":
+                    os.remove(recp)          # consumed: the key is free again
+                elif hmac.compare_digest(rec.get("fingerprint", ""), fp):
+                    if rec.get("state") in ("claimed", "submitting") or (
+                            rec.get("state") == "attached" and not rec.get("task_id")):
+                        return "indeterminate", rec   # previous owner died mid-flight; NEVER auto-rerun
+                    return "duplicate", rec
+                else:
                     return "conflict", rec
-                if rec.get("state") in ("claimed", "submitting") or (
-                        rec.get("state") == "attached" and not rec.get("task_id")):
-                    return "indeterminate", rec   # previous owner died mid-flight; NEVER auto-rerun
-                return "duplicate", rec
             rid = new_request_id()
             rec = {"key": key, "fingerprint": fp, "request_id": rid,
                    "task_id": None, "state": "claimed"}
@@ -404,6 +412,120 @@ def pickup_wants(affine_ws, spec_ws):
     if affine_ws:
         return bool(spec_ws) and os.path.realpath(spec_ws) == os.path.realpath(affine_ws)
     return affine_pane_for(spec_ws) is None
+
+
+# ---------- NAR workspace locks: honest staleness ----------
+# NAR 的锁文件记的 pid 是「提交者 executor」的 pid——跨进程 kill 改不了内存里的
+# 锁对象,任务终了后锁文件会残留且 pid 活着 → NAR 的 acquire 只查 pid,永远
+# 视为有效。桥层补上「holder 任务已终态 = 无锁」的判断与清扫(NAR 保持 pristine)。
+
+NAR_HOME = os.environ.get("NAR_HOME") or os.path.expanduser("~/.native-agent-router")
+NAR_TERMINAL = {"succeeded", "failed", "cancelled", "interrupted", "killed", "unknown"}
+NAR_ACTIVE = {"queued", "submitted", "running", "blocked", "cancel_requested", "cancelling"}
+
+def nar_task_status(task_id):
+    if not task_id:
+        return None
+    try:
+        with open(os.path.join(NAR_HOME, "tasks", str(task_id) + ".json")) as f:
+            return json.load(f).get("status")
+    except Exception:
+        return None
+
+def _nar_pid_alive(pid):
+    """POSIX-only liveness: os.kill(pid, 0) on Windows TERMINATES the target
+    instead of probing, so there we never claim staleness from the pid."""
+    if os.name == "nt" or not pid:
+        return True
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+def _lock_holder_stale(holder):
+    st = nar_task_status(holder.get("task_id"))
+    if st is not None:
+        return st in NAR_TERMINAL
+    if time.time() - float(holder.get("ts") or 0) > 86400:
+        return True   # NAR's own acquire treats >24h holders as stale
+    return not _nar_pid_alive(holder.get("pid"))
+
+def workspace_lock_holder(workspace):
+    """Live lock holder for this workspace after sweeping terminal residue,
+    else None. Swept = holder task is in a terminal state (the recorded pid is
+    the SUBMITTING executor and may outlive the task forever)."""
+    locks_dir = os.path.join(NAR_HOME, "locks")
+    h = hashlib.sha1(os.path.abspath(workspace).lower().encode("utf-8")).hexdigest()[:20]
+    path = os.path.join(locks_dir, h + ".lock")
+    try:
+        holder = json.load(open(path))
+    except Exception:
+        return None
+    if _lock_holder_stale(holder):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return None
+    return holder
+
+def sweep_workspace_locks(workspace=None, task_id=None):
+    """Delete lock files whose holder task is terminal / pid gone. Scope:
+    one workspace, one task, or everything. Returns removed paths."""
+    locks_dir = os.path.join(NAR_HOME, "locks")
+    removed = []
+    try:
+        names = os.listdir(locks_dir)
+    except OSError:
+        return removed
+    for f in sorted(names):
+        if not f.endswith(".lock"):
+            continue
+        p = os.path.join(locks_dir, f)
+        try:
+            holder = json.load(open(p))
+        except Exception:
+            continue
+        if workspace and os.path.abspath(holder.get("workspace") or "") != os.path.abspath(workspace):
+            continue
+        if task_id and holder.get("task_id") != task_id:
+            continue
+        if _lock_holder_stale(holder):
+            try:
+                os.unlink(p)
+                removed.append(p)
+            except OSError:
+                pass
+    return removed
+
+
+# ---------- offline cancel of queued disk tickets ----------
+
+def cancel_request(request_id):
+    """Cancel a disk ticket that has no task yet: write a tombstone the pickup
+    scan respects. Returns "cancelled" | "has_task" (delegate to the task)
+    | "unknown"."""
+    if not REQ_RE.match(request_id or ""):
+        return "unknown"
+    try:
+        rec = load_request(request_id)
+    except Exception:
+        return "unknown"
+    if rec.get("task_id"):
+        return "has_task"
+    marker = os.path.join(REQUESTS, request_id + ".cancel")
+    fd, tmp = tempfile.mkstemp(dir=REQUESTS, prefix="tmp-")
+    with os.fdopen(fd, "w") as f:
+        f.write("cancelled\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, marker)
+    return "cancelled"
+
+def request_cancelled(request_id):
+    if not REQ_RE.match(request_id or ""):
+        return False
+    return os.path.exists(os.path.join(REQUESTS, request_id + ".cancel"))
 
 
 # ---------- receipts: fold-proof submit acknowledgements ----------

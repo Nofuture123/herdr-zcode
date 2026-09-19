@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the request broker (no ZCode, no network, no herdr)."""
-import importlib.util, json, os, sys, tempfile, unittest
+import importlib.util, json, os, sys, tempfile, time, unittest
 from concurrent.futures import ThreadPoolExecutor
 
 spec = importlib.util.spec_from_file_location("broker", os.path.join(
@@ -79,8 +79,8 @@ class TestIdempotency(unittest.TestCase):
         self.assertEqual(st1, "new")
         broker.idempotency_state("k1", "fpA", "terminal", request_id=r1["request_id"])
         st2, r2 = broker.idempotency_claim("k1", "fpA")
-        self.assertEqual(st2, "duplicate")
-        self.assertEqual(r1["request_id"], r2["request_id"])
+        self.assertEqual(st2, "new")   # terminal frees the key: new task (#9)
+        self.assertNotEqual(r1["request_id"], r2["request_id"])
 
     def test_indeterminate_on_stuck_claim(self):
         broker.idempotency_claim("k1i", "fpA")
@@ -254,3 +254,111 @@ class TestPaneRegistry(unittest.TestCase):
         broker.register_pane("w1:pA", WS, os.getpid())
         self.assertFalse(broker.pickup_wants(None, WS))
         self.assertTrue(broker.pickup_wants(None, other))
+
+
+class TestNarLocks(unittest.TestCase):
+    def setUp(self):
+        self.nar = os.path.join(tmp, "nar")
+        broker.NAR_HOME = self.nar
+        os.makedirs(os.path.join(self.nar, "locks"), exist_ok=True)
+        os.makedirs(os.path.join(self.nar, "tasks"), exist_ok=True)
+        for f in os.listdir(os.path.join(self.nar, "locks")):
+            os.remove(os.path.join(self.nar, "locks", f))
+
+    def _task(self, tid, status):
+        with open(os.path.join(self.nar, "tasks", f"{tid}.json"), "w") as f:
+            json.dump({"task_id": tid, "status": status}, f)
+
+    def _lock(self, ws, tid, pid):
+        import hashlib
+        h = hashlib.sha1(os.path.abspath(ws).lower().encode()).hexdigest()[:20]
+        p = os.path.join(self.nar, "locks", h + ".lock")
+        with open(p, "w") as f:
+            json.dump({"pid": pid, "task_id": tid, "ts": time.time(), "workspace": ws}, f)
+        return p
+
+    def test_terminal_holder_swept(self):
+        self._task("t-" + "a"*12, "failed")
+        p = self._lock(WS, "t-" + "a"*12, os.getpid())   # pid ALIVE but task terminal
+        self.assertIsNone(broker.workspace_lock_holder(WS))
+        self.assertFalse(os.path.exists(p))
+
+    def test_live_holder_respected(self):
+        tid = "t-" + "b"*12
+        self._task(tid, "running")
+        self._lock(WS, tid, os.getpid())
+        holder = broker.workspace_lock_holder(WS)
+        self.assertIsNotNone(holder)
+        self.assertEqual(holder["task_id"], tid)
+
+    def test_unknown_task_dead_pid_swept(self):
+        p = self._lock(WS, "t-" + "c"*12, 99999999)
+        if os.name == "nt":
+            os.remove(p); self.skipTest("pid probe is posix-only")
+        self.assertIsNone(broker.workspace_lock_holder(WS))
+        self.assertFalse(os.path.exists(p))
+
+    def test_unknown_task_live_pid_kept(self):
+        self._lock(WS, "t-" + "d"*12, os.getpid())
+        self.assertIsNotNone(broker.workspace_lock_holder(WS))
+
+    def test_sweep_scoped_by_task(self):
+        tid_dead = "t-" + "e"*12
+        self._task(tid_dead, "interrupted")
+        p1 = self._lock(WS, tid_dead, os.getpid())
+        p2 = self._lock(tempfile.mkdtemp(), "t-" + "f"*12, os.getpid())
+        removed = broker.sweep_workspace_locks(task_id=tid_dead)
+        self.assertEqual(removed, [p1])
+        self.assertFalse(os.path.exists(p1))
+        self.assertTrue(os.path.exists(p2))
+
+
+class TestOfflineCancel(unittest.TestCase):
+    def test_cancel_queued_request_writes_tombstone(self):
+        rid = broker.new_request_id()
+        broker.save_request(rid, {"goal": "x", "request_id": rid})
+        self.assertEqual(broker.cancel_request(rid), "cancelled")
+        self.assertTrue(broker.request_cancelled(rid))
+        self.assertNotIn(rid + ".json",
+                         [os.path.basename(p) for p in broker.unclaimed_requests()])
+
+    def test_cancel_request_with_task_delegates(self):
+        rid = broker.new_request_id()
+        rec = broker.save_request(rid, {"goal": "x", "request_id": rid})
+        rec["task_id"] = "t-" + "1"*12
+        with open(os.path.join(broker.REQUESTS, rid + ".json"), "w") as f:
+            json.dump(rec, f)
+        self.assertEqual(broker.cancel_request(rid), "has_task")
+
+    def test_cancel_bad_id(self):
+        self.assertEqual(broker.cancel_request("garbage"), "unknown")
+
+
+class TestKeyTerminalReuse(unittest.TestCase):
+    def test_terminal_key_starts_fresh(self):
+        fp = "f" * 64
+        st, rec = broker.idempotency_claim("kt1", fp)
+        self.assertEqual(st, "new")
+        broker.idempotency_terminal("kt1", fp)
+        st2, rec2 = broker.idempotency_claim("kt1", fp)
+        self.assertEqual(st2, "new")                 # fresh attempt, NOT duplicate
+        self.assertNotEqual(rec["request_id"], rec2["request_id"])
+
+    def test_inflight_key_still_duplicate(self):
+        fp = "e" * 64
+        st, rec = broker.idempotency_claim("kt2", fp)
+        broker.idempotency_state("kt2", fp, "attached", task_id="t-" + "2"*12)
+        st2, rec2 = broker.idempotency_claim("kt2", fp)
+        self.assertEqual(st2, "duplicate")
+        self.assertEqual(rec2["request_id"], rec["request_id"])
+
+    def test_different_fp_after_terminal_is_fresh_not_conflict(self):
+        broker.idempotency_claim("kt3", "a" * 64)
+        broker.idempotency_terminal("kt3", "a" * 64)
+        st, _ = broker.idempotency_claim("kt3", "b" * 64)
+        self.assertEqual(st, "new")
+
+    def test_conflict_still_fires_while_inflight(self):
+        broker.idempotency_claim("kt4", "a" * 64)
+        st, _ = broker.idempotency_claim("kt4", "b" * 64)
+        self.assertEqual(st, "conflict")
