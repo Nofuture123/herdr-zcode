@@ -1,0 +1,43 @@
+# ZCode TUI (official zai-org/ZCode CLI, agent 0.16.x) detection rules.
+# Anchor: the model line inside the persistent input box (GLM-5.3 /
+# account:bigmodel / "Type a prompt" placeholder) — visible in every state,
+# specific to zcode (claude/codex never render it), so rules can't leak.
+
+id = "zcode"
+version = "2026.09.23.1"
+min_engine_version = 2
+updated_at = "2026-09-23T00:00:00Z"
+
+[[rules]]
+id = "working_interruptible"
+state = "working"
+priority = 900
+region = "whole_recent"
+visible_working = true
+all = [
+  { any = [
+    { contains = ["GLM-5.3"] },
+    { contains = ["account:bigmodel"] },
+    { contains = ["Type a prompt"] },
+  ] },
+  { any = [
+    { contains = ["esc to interrupt"] },
+    { regex = ['[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*esc to interrupt'] },
+  ] },
+]
+
+[[rules]]
+id = "idle_input_box"
+state = "idle"
+priority = 800
+region = "whole_recent"
+any = [
+  { contains = ["Type a prompt"] },
+  { all = [
+    { any = [
+      { contains = ["GLM-5.3"] },
+      { contains = ["account:bigmodel"] },
+    ] },
+    { not = [{ contains = ["esc to interrupt"] }] },
+  ] },
+]
