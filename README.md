@@ -148,6 +148,11 @@ first-class herdr agent:
   fabricated (honest absence until herdr gains a zcode hook integration).
 - **Works for plain launches too**: any pane running `zcode ...` — not just
   plugin-opened panes — is claimed automatically.
+- **`/quit` patch**: upstream 0.16.x has no `/quit` (exit = Ctrl-C twice).
+  `sh scripts/patch-zcode-quit.sh` adds a `/quit` slash command that exits
+  through the same graceful path (session save + telemetry shutdown). The
+  patch edits the installed runtime in place and is idempotent — re-run it
+  after any zcode reinstall or version update.
 
 ---
 
