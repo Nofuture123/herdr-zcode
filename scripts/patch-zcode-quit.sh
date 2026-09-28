@@ -82,24 +82,34 @@ def already(text):
 
 
 # 1. builtin registry -> autocomplete, /help listing, reserved-name protection
+# The quit entry is inserted right after the goal entry; the anchor has two
+# shapes across versions: goal mid-array (3.14.3+ has /workflow after it) or
+# goal last (3.14.0).
+QUIT_ENTRY = '''      {
+        details: ["Exits the interactive TUI; same as pressing Ctrl-C twice."],
+        name: "quit",
+        summary: "Quit the TUI.",
+        usage: "/quit"
+      },'''
+GOAL_USAGE = '        usage: "/goal [pause|resume|clear|replace <objective>|<objective>]"\n'
 path = agent_cjs
 text = load(path)
 if already(text) or 'name: "quit"' in text:
     print("1. registry: already patched")
 else:
-    anchor = '''        usage: "/goal [pause|resume|clear|replace <objective>|<objective>]"
-      }
-    ];'''
-    insert = '''        usage: "/goal [pause|resume|clear|replace <objective>|<objective>]"
-      },
-      {
-        details: ["Exits the interactive TUI; same as pressing Ctrl-C twice."],
-        name: "quit",
-        summary: "Quit the TUI.",
-        usage: "/quit"
-      }
-    ];'''
-    text = replace_once(text, anchor, insert, path, "1. registry")
+    for tail, replacement in (
+        ('      },', GOAL_USAGE + '      },\n' + QUIT_ENTRY),
+        ('      }\n    ];', GOAL_USAGE + '      },\n' + QUIT_ENTRY[:-1] + '\n    ];'),
+    ):
+        anchor = GOAL_USAGE + tail
+        if text.count(anchor) == 1:
+            text = text.replace(anchor, replacement)
+            break
+    else:
+        raise SystemExit(
+            "1. registry: goal-entry anchor not found in " + path + " — "
+            "upstream moved, patch needs a manual rebase"
+        )
     save(path, text)
     print("1. registry: patched")
 
