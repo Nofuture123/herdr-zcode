@@ -1,8 +1,8 @@
 id = "zcode.integration"
 name = "ZCode"
-version = "1.0.0"
+version = "1.1.0"
 min_herdr_version = "0.9.1"
-description = "Official ZCode CLI (zai-org/ZCode) as a first-class herdr agent: TUI panes with real TTY, screen-based state detection, and pane status claiming."
+description = "Official ZCode CLI (zai-org/ZCode) as a first-class herdr agent: TUI panes with real TTY, automatic agent claiming via the watchdog daemon, and screen-based state detection."
 platforms = ["macos", "linux"]
 
 # Interactive ZCode sessions run as plugin PANE entrypoints — herdr opens a
@@ -12,6 +12,14 @@ platforms = ["macos", "linux"]
 # NOTE: herdr runs pane entry commands with the pane's --cwd (NOT the plugin
 # root) when one is given, so the script path resolves via the
 # HERDR_PLUGIN_ROOT env herdr injects into every plugin pane.
+
+# herdr 0.9.x identifies agents from a hardcoded Agent table without zcode,
+# so a zcode TUI pane is never detected natively. The watchdog daemon claims
+# every pane whose foreground process is the zcode CLI (source
+# zcode-integration), feeds idle/working from the pane screen, and releases
+# the claim when the TUI exits. Runs once per server start.
+[[startup]]
+command = ["python3", "-c", "import os,subprocess,sys; root=os.environ.get('HERDR_PLUGIN_ROOT') or os.getcwd(); sys.exit(subprocess.call(['python3', os.path.join(root, 'scripts', 'agent_watchdog.py'), 'daemon']))"]
 
 [[panes]]
 id = "task"

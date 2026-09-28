@@ -1,11 +1,12 @@
 #!/bin/sh
 # Screen-based status watcher for a zcode TUI pane.
 #
-# herdr's built-in screen detection only covers its 21 bundled agents, and the
-# zcode CLI's hook events do not fire in TUI sessions yet, so this watcher
-# provides the status feed instead: it polls the pane's visible screen, applies
-# the same two patterns as config/agent-detection/zcode.toml, and reports the
-# state via `pane report-agent` on every transition. Exits when the pane dies.
+# herdr 0.9.x cannot detect the zcode agent natively (its Agent table is a
+# closed enum), so state comes from report-agent. This watcher is spawned by
+# agent_watchdog.py for each claimed pane: it polls the pane's visible
+# screen, applies the same two patterns as config/agent-detection/zcode.toml,
+# and reports idle/working on every transition via `pane report-agent`
+# (source zcode-integration). It exits when the pane dies.
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
 for _dir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
@@ -20,12 +21,13 @@ PANE_ID="${HERDR_PANE_ID:-}"
 [ -n "$PANE_ID" ] || exit 0
 [ "${HERDR_ENV:-}" = "1" ] || exit 0
 
-SEQ_FILE="${TMPDIR:-/tmp}/herdr-zcode-seq-${PANE_ID}"
+RUN_DIR="${ZCODE_WATCHDOG_RUN_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-zcode-integration}"
+# herdr rejects non-increasing --seq per source, and the daemon also writes
+# this counter — increment through the watchdog's flock-protected counter so
+# a release can never race a watcher report to the same sequence number.
+WATCHDOG_PY="$(cd "$(dirname "$0")" && pwd)/agent_watchdog.py"
 next_seq() {
-  s=$(cat "$SEQ_FILE" 2>/dev/null | tr -dc '0-9')
-  s=$(( ${s:-$(date +%s)} + 1 ))
-  printf '%s' "$s" > "$SEQ_FILE"
-  printf '%s' "$s"
+  python3 "$WATCHDOG_PY" next-seq "$PANE_ID" 2>/dev/null || date +%s
 }
 
 report() {
@@ -36,7 +38,7 @@ report() {
 last=""
 dead_count=0
 while :; do
-  screen=$("$HERDR" pane read "$PANE_ID" --source visible --lines 14 2>/dev/null)
+  screen=$("$HERDR" pane read "$PANE_ID" --source visible --lines 24 2>/dev/null)
   if [ -z "$screen" ]; then
     dead_count=$((dead_count + 1))
     [ "$dead_count" -ge 3 ] && exit 0

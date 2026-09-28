@@ -122,6 +122,35 @@ Why use ZCode as the execution engine?
 
 ---
 
+## 🔎 Automatic Agent Detection (current architecture)
+
+> The delegation bridge (`zcodecli`/NAR/MCP injection) was retired on 2026-09-23:
+> the official ZCode CLI now runs headless and interactive out of the box
+> (`zcode login bigmodel`, then `zcode --prompt ...` or a plain `zcode` TUI).
+> Its scripts remain in this repo dormant as reference.
+
+The plugin (`zcode.integration`) now integrates the **official ZCode CLI** as a
+first-class herdr agent:
+
+- **TUI panes**: the plugin's `task` pane entry opens a real-PTY ZCode TUI.
+- **Automatic claiming**: herdr 0.9.x identifies agents from a hardcoded table
+  of 24 CLIs — `zcode` is not in it, so a ZCode TUI pane is never detected
+  natively. The plugin ships a startup daemon (`scripts/agent_watchdog.py`)
+  that scans panes every few seconds, claims every pane whose foreground
+  process is the ZCode CLI (`--source zcode-integration --agent zcode`),
+  and never touches panes already owned by another agent or controller.
+- **Live state**: a per-pane screen watcher (`scripts/watch-status.sh`) feeds
+  real `idle → working → done` transitions by matching the TUI screen
+  (spinner + `esc to interrupt` status line vs. the `Type a prompt` input
+  box); herdr derives `done` with its own result-seen semantics.
+- **No ghosts**: when the TUI exits (foreground returns to a shell) the claim
+  is released; closed panes are reaped; no native session id is ever
+  fabricated (honest absence until herdr gains a zcode hook integration).
+- **Works for plain launches too**: any pane running `zcode ...` — not just
+  plugin-opened panes — is claimed automatically.
+
+---
+
 ## 🌟 Key Selling Points
 
 1. 🪙 **The 50% Quota Arbitrage**:

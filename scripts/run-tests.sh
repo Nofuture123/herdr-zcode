@@ -5,13 +5,13 @@ cd "$(dirname "$0")/.."
 echo "== shell syntax =="; sh -n scripts/*.sh 2>/dev/null; true
 echo "== manifest =="; python3 -c "import tomllib; tomllib.loads(open('herdr-plugin.toml').read())"
 python3 - <<'PY'
-import tomllib
+import os, tomllib
 m = tomllib.loads(open("herdr-plugin.toml").read())
-ex = [p for p in m.get("panes", []) if p.get("id") == "executor"]
-assert ex, "executor pane missing"
-plats = ex[0].get("platforms")
-assert not plats or "windows" in plats, "executor pane must also run on windows"
-assert any(a["id"] == "open-here" for a in m.get("actions", [])), "open-here action missing"
+assert m.get("id") == "zcode.integration", "manifest id must be zcode.integration"
+assert any(p.get("id") == "task" for p in m.get("panes", [])), "task pane missing"
+assert any(a.get("id") == "setup" for a in m.get("actions", [])), "setup action missing"
+assert m.get("startup"), "startup entry missing (watchdog daemon)"
+assert os.path.isfile("config/agent-detection/zcode.toml"), "agent-detection manifest missing"
 print("manifest entries ok")
 PY
 echo "== python compile =="; python3 -m py_compile scripts/*.py

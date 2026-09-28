@@ -4,16 +4,11 @@
 . "$(dirname "$0")/common.sh"
 
 ensure_agent_detection
-claim_agent
+ensure_daemon
 
-# Status feed: herdr's screen detection covers only its bundled agents and the
-# zcode TUI does not fire hook events yet, so run the screen watcher alongside
-# the TUI (it exits on pane death). The watcher must start BEFORE exec so it
-# survives the shell being replaced by the zcode process.
-if [ -x "$(dirname "$0")/watch-status.sh" ]; then
-  "$(dirname "$0")/watch-status.sh" &
-fi
-
+# Claiming and status feeding are owned by the agent watchdog (it scans every
+# pane, so plain `zcode ...` panes opened outside this entrypoint behave the
+# same). Just exec the TUI.
 mode="${1:-task}"
 case "$mode" in
   task)

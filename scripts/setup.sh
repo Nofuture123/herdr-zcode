@@ -1,8 +1,11 @@
 #!/bin/sh
 # Install the herdr integration pieces that outlive a single pane:
 #  - the zcode agent-detection override (screen-based state detection)
-#  - a pane agent claim check + CLI presence doctor
-# Safe to run repeatedly.
+#  - the agent watchdog (auto-claims any pane running the zcode CLI and
+#    feeds its state, including panes opened outside the plugin)
+#  - a CLI presence doctor
+# Safe to run repeatedly. Claiming is owned exclusively by the watchdog so a
+# pane never keeps a stale agent label after its zcode process exits.
 . "$(dirname "$0")/common.sh"
 
 ensure_agent_detection && echo "agent-detection override: seeded"
@@ -14,9 +17,5 @@ else
   exit 1
 fi
 
-if in_herdr && [ -n "$PANE_ID" ]; then
-  claim_agent && echo "pane agent claimed: $PANE_ID"
-else
-  echo "note: run inside a herdr pane (or open one via the plugin) for the agent claim"
-fi
+ensure_daemon && echo "agent watchdog: running"
 echo "done."
